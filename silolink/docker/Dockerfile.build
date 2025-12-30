@@ -1,0 +1,73 @@
+# Dockerfile for building IfcOpenShell with modified hybrid_kernel.h
+# This builds Python bindings with SIGSEGV recovery support
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    patchelf \
+    swig \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    libboost-all-dev \
+    libocct-foundation-dev \
+    libocct-modeling-algorithms-dev \
+    libocct-modeling-data-dev \
+    libocct-ocaf-dev \
+    libocct-visualization-dev \
+    libocct-data-exchange-dev \
+    libocct-draw-dev \
+    occt-misc \
+    libcgal-dev \
+    libhdf5-dev \
+    libeigen3-dev \
+    libxml2-dev \
+    liblzma-dev \
+    libtbb-dev \
+    libicu-dev \
+    nlohmann-json3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /build
+
+# Copy source code (including modified hybrid_kernel.h)
+COPY . /build/ifcopenshell
+
+# IMPORTANT: Remove any existing build artifacts from local machine
+RUN rm -rf /build/ifcopenshell/build && mkdir -p /build/ifcopenshell/build
+
+# Create build directory and configure
+# Set OCC paths explicitly for Ubuntu 22.04
+WORKDIR /build/ifcopenshell/build
+RUN cmake ../cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCOLLADA_SUPPORT=OFF \
+    -DGLTF_SUPPORT=ON \
+    -DIFCXML_SUPPORT=OFF \
+    -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+    -DCMAKE_INSTALL_PREFIX=/install \
+    -DOCC_INCLUDE_DIR=/usr/include/opencascade \
+    -DOCC_LIBRARY_DIR=/usr/lib/x86_64-linux-gnu \
+    -DOpenCASCADE_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencascade
+
+# Build (using 4 parallel jobs to avoid OOM)
+RUN make -j4
+
+# Install
+RUN make install
+
+# Copy built Python package to output directory
+RUN mkdir -p /output && \
+    cp -r /install/lib/python*/site-packages/ifcopenshell /output/ 2>/dev/null || \
+    cp -r /build/ifcopenshell/build/ifcwrap/*.so /output/ 2>/dev/null || true
+
+# Default command: show what was built
+CMD ["ls", "-la", "/output"]
