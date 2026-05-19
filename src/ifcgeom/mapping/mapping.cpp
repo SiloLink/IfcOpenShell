@@ -260,8 +260,14 @@ void mapping::get_representations(std::vector<geometry_conversion_task>& tasks, 
         bool representation_processed_as_mapped_item = false;
         IfcSchema::IfcRepresentation* representation_mapped_to_result = representation_mapped_to(representation);
         if (representation_mapped_to_result) {
+            IfcSchema::IfcRepresentationMap* mapped_rmap = nullptr;
+            // Match the product set used when the mapped source representation is scheduled.
+            IfcSchema::IfcProduct::list::ptr mapped_ifcproducts = filter_products(
+                products_represented_by(representation_mapped_to_result, mapped_rmap),
+                filters
+            );
             representation_processed_as_mapped_item = geometry_reuse_ok_for_current_representation_ && (
-                ok_mapped_representations->contains(representation_mapped_to_result) || reuse_ok_(products_represented_by(representation_mapped_to_result, rmap)));
+                ok_mapped_representations->contains(representation_mapped_to_result) || reuse_ok_(mapped_ifcproducts));
         }
 
         if (representation_processed_as_mapped_item) {
