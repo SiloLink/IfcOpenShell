@@ -9,6 +9,8 @@ import pytest
 
 import ifcopenshell
 import ifcopenshell.api.context
+import ifcopenshell.api.geometry
+import ifcopenshell.api.material
 import ifcopenshell.api.owner.settings
 import ifcopenshell.api.project
 import ifcopenshell.api.root
@@ -214,6 +216,68 @@ def test_iterator():
                 pargs.append(a)
         iterator = ifcopenshell.geom.iterator(settings, *pargs, **kwargs)
         assert iterator.initialize()
+
+
+def test_iterator_include_filter_does_not_duplicate_identity_mapped_representation():
+    ifc_file = ifcopenshell.api.project.create_file()
+    ifcopenshell.api.root.create_entity(ifc_file, ifc_class="IfcProject", name="Test")
+    unit = ifcopenshell.api.unit.add_si_unit(ifc_file, unit_type="LENGTHUNIT")
+    ifcopenshell.api.unit.assign_unit(ifc_file, units=[unit])
+    context = ifcopenshell.api.context.add_context(ifc_file, context_type="Model")
+    body = ifcopenshell.api.context.add_context(
+        ifc_file,
+        context_type="Model",
+        context_identifier="Body",
+        target_view="MODEL_VIEW",
+        parent=context,
+    )
+
+    builder = ShapeBuilder(ifc_file)
+    source_representation = builder.get_representation(body, builder.extrude(builder.rectangle(), magnitude=1.0))
+    representation_map = ifc_file.createIfcRepresentationMap(
+        MappingOrigin=ifc_file.createIfcAxis2Placement3D(ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))),
+        MappedRepresentation=source_representation,
+    )
+
+    def create_identity_mapped_representation():
+        target = ifc_file.createIfcCartesianTransformationOperator3D(
+            ifc_file.createIfcDirection((1.0, 0.0, 0.0)),
+            ifc_file.createIfcDirection((0.0, 1.0, 0.0)),
+            ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0)),
+            1.0,
+            ifc_file.createIfcDirection((0.0, 0.0, 1.0)),
+        )
+        return ifc_file.createIfcShapeRepresentation(
+            body,
+            "Body",
+            "MappedRepresentation",
+            [ifc_file.createIfcMappedItem(MappingSource=representation_map, MappingTarget=target)],
+        )
+
+    products = []
+    for material_name in ("A", "B"):
+        product = ifcopenshell.api.root.create_entity(ifc_file, ifc_class="IfcWall", name=f"Wall {material_name}")
+        ifcopenshell.api.geometry.edit_object_placement(ifc_file, product=product)
+        product.Representation = ifc_file.createIfcProductDefinitionShape(
+            Representations=[create_identity_mapped_representation()]
+        )
+        material = ifcopenshell.api.material.add_material(ifc_file, name=material_name)
+        ifcopenshell.api.material.assign_material(ifc_file, products=[product], material=material)
+        products.append(product)
+
+    settings = ifcopenshell.geom.settings()
+    settings.set(settings.USE_WORLD_COORDS, False)
+    iterator = ifcopenshell.geom.iterator(settings, ifc_file, include=[products[0]], num_threads=1)
+    assert iterator.initialize()
+
+    ids = []
+    while True:
+        ids.append(iterator.get().id)
+        if not iterator.next():
+            break
+
+    assert ids == [products[0].id()]
+    assert [[product.id() for product in group] for group in iterator.get_task_products()] == [[products[0].id()]]
 
 
 if __name__ == "__main__":
