@@ -1,32 +1,47 @@
-FROM python:3.11-bookworm
+FROM rockylinux:9
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    git \
-    patchelf \
-    swig \
-    libboost-all-dev \
-    libocct-foundation-dev \
-    libocct-modeling-algorithms-dev \
-    libocct-modeling-data-dev \
-    libocct-ocaf-dev \
-    libocct-visualization-dev \
-    libocct-data-exchange-dev \
-    libocct-draw-dev \
-    occt-misc \
-    libcgal-dev \
-    libhdf5-dev \
-    libeigen3-dev \
-    libxml2-dev \
-    liblzma-dev \
-    libtbb-dev \
-    libicu-dev \
-    libsvgpp-dev \
-    nlohmann-json3-dev \
-    && python -m pip install --upgrade pip build wheel auditwheel \
-    && rm -rf /var/lib/apt/lists/*
+RUN dnf update -y \
+    && dnf install -y \
+        autoconf \
+        automake \
+        bison \
+        bzip2 \
+        bzip2-devel \
+        cmake \
+        diffutils \
+        findutils \
+        fontconfig-devel \
+        gcc \
+        gcc-c++ \
+        git \
+        git-lfs \
+        gzip \
+        libffi-devel \
+        libuuid-devel \
+        make \
+        mesa-libGL-devel \
+        ncurses-devel \
+        openssl-devel \
+        patch \
+        python3 \
+        python3-pip \
+        readline-devel \
+        sqlite-devel \
+        tar \
+        unzip \
+        wget \
+        which \
+        xz \
+        xz-devel \
+        zip \
+        zlib-devel \
+        byacc \
+    && python3 -m pip install --upgrade pip build wheel packaging typing_extensions \
+    && git lfs install --system \
+    && git config --global --add safe.directory '*' \
+    && dnf clean all
+
+WORKDIR /workspace

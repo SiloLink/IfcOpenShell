@@ -12,7 +12,7 @@ steps:
     entrypoint: bash
     args:
       - -lc
-      - IMAGE=ifcopenshell-build-py311-amd64-cloud BUILD_JOBS=8 ./silolink/scripts/build_py311_amd64_wheel.sh
+      - IMAGE=ifcopenshell-build-py311-amd64-cloud BUILD_JOBS=8 USE_UPSTREAM_CACHE=1 ./silolink/scripts/build_py311_amd64_wheel.sh
 
 artifacts:
   objects:
@@ -24,4 +24,4 @@ options:
   machineType: E2_HIGHCPU_32
   logging: CLOUD_LOGGING_ONLY
 
-timeout: 7200s
+timeout: 21600s
