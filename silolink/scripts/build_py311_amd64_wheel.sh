@@ -11,7 +11,8 @@ WHEEL_BUILD_DIR="${WHEEL_BUILD_DIR:-wheel_build_py311}"
 WHEEL_TEMP_DIR="${WHEEL_TEMP_DIR:-wheel_temp_py311}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-0.8.5+silolink.1}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.11.8}"
-PYTHON_TAG="${PYTHON_TAG:-py311}"
+PYTHON_TAG="${PYTHON_TAG:-cp311}"
+ABI_TAG="${ABI_TAG:-cp311}"
 PYTHON_BUILD_FLAG="${PYTHON_BUILD_FLAG:--py-311}"
 TARGET_PLAT="${TARGET_PLAT:-manylinux_2_31_x86_64}"
 USE_UPSTREAM_CACHE="${USE_UPSTREAM_CACHE:-1}"
@@ -28,6 +29,7 @@ Builder image:        $IMAGE
 Build directory:      $BUILD_DIR
 Python:              $PYTHON_VERSION ($PYTHON_TAG / $PYTHON_BUILD_FLAG)
 Package version:      $PACKAGE_VERSION
+Wheel ABI tag:       $ABI_TAG
 Wheel platform tag:   $TARGET_PLAT
 Dependency stack:     upstream nix/build-all.py, OCCT 7.8.1
 Upstream cache:       $USE_UPSTREAM_CACHE ($UPSTREAM_CACHE_REF)
@@ -40,7 +42,7 @@ DRY RUN:
   docker run --platform linux/amd64 -v "$REPO_ROOT:/workspace" "$IMAGE"
   cache branch: $UPSTREAM_CACHE_REF
   build command: BUILD_CFG=Release IFCOS_NUM_BUILD_PROCS=$BUILD_JOBS ADD_COMMIT_SHA=$ADD_COMMIT_SHA python3 ./nix/build-all.py -v --diskcleanup $PYTHON_BUILD_FLAG IfcOpenShell-Python
-  package command: python3 -m build --wheel, renamed to ifcopenshell-$PACKAGE_VERSION-$PYTHON_TAG-none-$TARGET_PLAT.whl
+  package command: python3 -m build --wheel, repacked to ifcopenshell-$PACKAGE_VERSION-$PYTHON_TAG-$ABI_TAG-$TARGET_PLAT.whl
 EOF
   exit 0
 fi
@@ -55,6 +57,7 @@ docker run --rm --platform linux/amd64 \
   -e PACKAGE_VERSION="$PACKAGE_VERSION" \
   -e PYTHON_VERSION="$PYTHON_VERSION" \
   -e PYTHON_TAG="$PYTHON_TAG" \
+  -e ABI_TAG="$ABI_TAG" \
   -e PYTHON_BUILD_FLAG="$PYTHON_BUILD_FLAG" \
   -e TARGET_PLAT="$TARGET_PLAT" \
   -e USE_UPSTREAM_CACHE="$USE_UPSTREAM_CACHE" \
@@ -227,25 +230,99 @@ PY
       exit 1
     fi
 
-    final_wheel="/workspace/wheels/ifcopenshell-${PACKAGE_VERSION}-${PYTHON_TAG}-none-${TARGET_PLAT}.whl"
+    final_wheel="/workspace/wheels/ifcopenshell-${PACKAGE_VERSION}-${PYTHON_TAG}-${ABI_TAG}-${TARGET_PLAT}.whl"
     rm -f "$final_wheel"
-    cp "$built_wheel" "$final_wheel"
 
     python3 - <<PY
+import base64
+import csv
+import hashlib
+import io
+import os
+import tempfile
 import zipfile
 from pathlib import Path
 
+source_wheel = Path("$built_wheel")
 wheel = Path("$final_wheel")
-with zipfile.ZipFile(wheel) as zf:
+python_tag = "$PYTHON_TAG"
+abi_tag = "$ABI_TAG"
+platform_tag = "$TARGET_PLAT"
+expected_tag = f"{python_tag}-{abi_tag}-{platform_tag}"
+
+def record_digest(data):
+    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+    return f"sha256={digest}", str(len(data))
+
+with zipfile.ZipFile(source_wheel) as zf:
     names = zf.namelist()
     metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
     wheel_name = next(name for name in names if name.endswith(".dist-info/WHEEL"))
+    record_name = next(name for name in names if name.endswith(".dist-info/RECORD"))
     metadata = zf.read(metadata_name).decode()
     wheel_metadata = zf.read(wheel_name).decode()
     assert "Version: $PACKAGE_VERSION" in metadata, metadata
-    assert "Tag: py3-none-any" in wheel_metadata, wheel_metadata
     assert any(name.endswith("_ifcopenshell_wrapper.cpython-311-x86_64-linux-gnu.so") for name in names)
     assert not any(".libs/" in name for name in names), "unexpected bundled shared library directory"
+
+    updated_wheel_lines = []
+    saw_root = False
+    for line in wheel_metadata.splitlines():
+        if not line:
+            continue
+        if line.startswith("Root-Is-Purelib:"):
+            updated_wheel_lines.append("Root-Is-Purelib: false")
+            saw_root = True
+        elif not line.startswith("Tag:"):
+            updated_wheel_lines.append(line)
+    if not saw_root:
+        updated_wheel_lines.append("Root-Is-Purelib: false")
+    updated_wheel_lines.append(f"Tag: {expected_tag}")
+    updated_wheel_metadata = "\n".join(updated_wheel_lines).rstrip() + "\n\n"
+
+    entries = []
+    for info in zf.infolist():
+        if info.filename == record_name:
+            continue
+        data = zf.read(info.filename)
+        if info.filename == wheel_name:
+            data = updated_wheel_metadata.encode()
+        entries.append((info, data))
+
+with tempfile.NamedTemporaryFile(delete=False, dir=wheel.parent, suffix=".whl") as tmp:
+    tmp_path = Path(tmp.name)
+
+try:
+    with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as out:
+        record_rows = []
+        for info, data in entries:
+            out.writestr(info, data)
+            digest, size = record_digest(data)
+            record_rows.append([info.filename, digest, size])
+        record_rows.append([record_name, "", ""])
+
+        record_buffer = io.StringIO()
+        writer = csv.writer(record_buffer, lineterminator="\n")
+        writer.writerows(record_rows)
+        out.writestr(record_name, record_buffer.getvalue().encode())
+    os.replace(tmp_path, wheel)
+finally:
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+with zipfile.ZipFile(wheel) as zf:
+    names = zf.namelist()
+    wheel_name = next(name for name in names if name.endswith(".dist-info/WHEEL"))
+    record_name = next(name for name in names if name.endswith(".dist-info/RECORD"))
+    wheel_metadata = zf.read(wheel_name).decode()
+    record_text = zf.read(record_name).decode()
+    assert "Root-Is-Purelib: false" in wheel_metadata, wheel_metadata
+    assert f"Tag: {expected_tag}" in wheel_metadata, wheel_metadata
+    assert "Tag: py3-none-any" not in wheel_metadata, wheel_metadata
+    assert "\n\nTag:" not in wheel_metadata, wheel_metadata
+    wheel_data = zf.read(wheel_name)
+    digest, size = record_digest(wheel_data)
+    assert f"{wheel_name},{digest},{size}" in record_text, record_text
 print(wheel)
 PY
 
