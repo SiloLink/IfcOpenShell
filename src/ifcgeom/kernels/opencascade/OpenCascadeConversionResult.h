@@ -47,17 +47,29 @@ namespace ifcopenshell {
 		public:
 			OpenCascadeShape(const TopoDS_Shape& shape)
 				: shape_(shape) {}
+			OpenCascadeShape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles)
+				: shape_(shape), face_styles_(std::move(face_styles)) {}
 			OpenCascadeShape(TopoDS_Shape&& shape)
 				: shape_(std::move(shape)) {}
+			OpenCascadeShape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles)
+				: shape_(std::move(shape)), face_styles_(std::move(face_styles)) {}
 
 			const TopoDS_Shape& shape() const { return shape_; }
 			operator const TopoDS_Shape& () { return shape_; }
+			const std::vector<taxonomy::style::ptr>& face_styles() const override { return face_styles_; }
 
 			virtual void Triangulate(ifcopenshell::geometry::Settings settings, const ifcopenshell::geometry::taxonomy::matrix4& place, IfcGeom::Representation::Triangulation* t, int item_id, int surface_style_id) const;
+			virtual void Triangulate(
+				ifcopenshell::geometry::Settings settings,
+				const ifcopenshell::geometry::taxonomy::matrix4& place,
+				IfcGeom::Representation::Triangulation* t,
+				int item_id,
+				int surface_style_id,
+				const std::vector<int>& face_style_ids) const;
 			virtual void Serialize(const ifcopenshell::geometry::taxonomy::matrix4& place, std::string&) const;
 
 			virtual IfcGeom::ConversionResultShape* clone() const {
-				return new OpenCascadeShape(shape_);
+				return new OpenCascadeShape(shape_, face_styles_);
 			}
 
 			virtual double bounding_box(void*&) const {
@@ -108,6 +120,7 @@ namespace ifcopenshell {
 			virtual bool surface_area_along_direction(double tol, const ifcopenshell::geometry::taxonomy::matrix4::ptr&, double& along_x, double& along_y, double& along_z) const;
 		private:
 			TopoDS_Shape shape_;
+			std::vector<taxonomy::style::ptr> face_styles_;
 		};
 
 	}

@@ -44,6 +44,8 @@
 #include <setjmp.h>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
+#include <set>
 
 #ifdef IFOPSH_WITH_OPENCASCADE
 #include "../ifcgeom/kernels/opencascade/OpenCascadeKernel.h"
@@ -75,6 +77,47 @@ namespace {
 		}
 #endif
 		return false;
+	}
+
+	inline std::set<ifcopenshell::geometry::taxonomy::style::ptr> required_face_styles(
+		const ifcopenshell::geometry::taxonomy::ptr& item)
+	{
+		std::set<ifcopenshell::geometry::taxonomy::style::ptr> result;
+		auto shell = std::dynamic_pointer_cast<ifcopenshell::geometry::taxonomy::shell>(item);
+		if (shell) {
+			for (const auto& face : shell->children) {
+				if (face->surface_style) {
+					result.insert(face->surface_style);
+				}
+			}
+		} else if (auto collection = std::dynamic_pointer_cast<ifcopenshell::geometry::taxonomy::collection>(item)) {
+			for (const auto& child : collection->children) {
+				auto child_styles = required_face_styles(child);
+				result.insert(child_styles.begin(), child_styles.end());
+			}
+		}
+		return result;
+	}
+
+	inline bool preserves_face_styles(
+		const IfcGeom::ConversionResults& results,
+		size_t begin,
+		const std::set<ifcopenshell::geometry::taxonomy::style::ptr>& required)
+	{
+		if (required.empty()) {
+			return true;
+		}
+		std::set<ifcopenshell::geometry::taxonomy::style::ptr> preserved;
+		for (size_t i = begin; i < results.size(); ++i) {
+			for (const auto& style : results[i].Shape()->face_styles()) {
+				if (style) {
+					preserved.insert(style);
+				}
+			}
+		}
+		return std::all_of(
+			required.begin(), required.end(),
+			[&](const auto& style) { return preserved.find(style) != preserved.end(); });
 	}
 
 	// Per-thread jump buffer and crash flag
@@ -172,6 +215,7 @@ namespace ifcopenshell {
 				virtual bool convert(const taxonomy::ptr item, IfcGeom::ConversionResults& rs)
 				{
 					auto ops = mapping_->find_openings(item->instance->as<IfcUtil::IfcBaseEntity>());
+					auto face_styles = required_face_styles(item);
 					bool has_openings = ops && ops->size();
 					for (auto& k : kernels_) {
 #ifdef IFOPSH_WITH_CGAL
@@ -186,6 +230,7 @@ namespace ifcopenshell {
 						}
 #endif
 						bool success = false;
+						auto result_begin = rs.size();
 
 						SigGuard guard;
 						if (sigsetjmp(hybrid_kernel_sig_jmp_buf, 1) == 0) {
@@ -200,6 +245,11 @@ namespace ifcopenshell {
 								k->geometry_library().c_str());
 							success = false;
 							rs.clear();
+						}
+
+						if (success && !preserves_face_styles(rs, result_begin, face_styles)) {
+							success = false;
+							rs.erase(rs.begin() + result_begin, rs.end());
 						}
 
 						if (success) {

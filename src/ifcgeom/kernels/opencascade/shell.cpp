@@ -24,7 +24,11 @@ namespace {
 	}
 }
 
-bool OpenCascadeKernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& shape) {
+bool OpenCascadeKernel::convert(
+	const taxonomy::shell::ptr l,
+	TopoDS_Shape& shape,
+	std::vector<taxonomy::style::ptr>* face_styles)
+{
 	std::unique_ptr<faceset_helper> helper_scope;
 	if (shell_polyhedral(l)) {
 		helper_scope.reset(new faceset_helper(this, l));
@@ -39,6 +43,7 @@ bool OpenCascadeKernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& shap
 		: minimal_face_area;
 
 	TopTools_ListOfShape face_list;
+	std::vector<std::pair<TopoDS_Face, taxonomy::style::ptr>> source_faces;
 	for (auto& face : l->children) {
 		bool success = false;
 		TopoDS_Face occ_face;
@@ -70,6 +75,9 @@ bool OpenCascadeKernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& shap
 					const TopoDS_Face& triangle = TopoDS::Face(face_it.Value());
 					if (face_area(triangle) > min_face_area) {
 						face_list.Append(triangle);
+						if (face_styles) {
+							source_faces.emplace_back(triangle, face->surface_style);
+						}
 					} else {
 						Logger::Message(Logger::LOG_WARNING, "Degenerate face:", face->instance);
 					}
@@ -78,6 +86,9 @@ bool OpenCascadeKernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& shap
 		} else {
 			if (face_area(occ_face) > min_face_area) {
 				face_list.Append(occ_face);
+				if (face_styles) {
+					source_faces.emplace_back(occ_face, face->surface_style);
+				}
 			} else {
 				Logger::Message(Logger::LOG_WARNING, "Degenerate face:", face->instance);
 			}
@@ -103,6 +114,50 @@ bool OpenCascadeKernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& shap
 		shape = compound;
 	}
 
+	if (face_styles) {
+		face_styles->clear();
+		const bool has_face_styles = std::any_of(
+			source_faces.begin(),
+			source_faces.end(),
+			[](const auto& source) { return !!source.second; });
+		if (has_face_styles) {
+			std::vector<bool> matched_sources(source_faces.size(), false);
+			TopExp_Explorer output_faces(shape, TopAbs_FACE);
+			for (; output_faces.More(); output_faces.Next()) {
+				const auto& output_face = TopoDS::Face(output_faces.Current());
+				int match = -1;
+				for (size_t i = 0; i < source_faces.size(); ++i) {
+					if (output_face.IsSame(source_faces[i].first)) {
+						if (match != -1) {
+							match = -2;
+							break;
+						}
+						match = static_cast<int>(i);
+					}
+				}
+
+				if (match >= 0) {
+					face_styles->push_back(source_faces[match].second);
+					matched_sources[match] = true;
+				} else {
+					face_styles->push_back(nullptr);
+				}
+			}
+
+			bool lost_style = false;
+			for (size_t i = 0; i < source_faces.size(); ++i) {
+				if (source_faces[i].second && !matched_sources[i]) {
+					lost_style = true;
+					break;
+				}
+			}
+			if (lost_style) {
+				Logger::Warning("Unable to preserve all face styles after shell conversion: ", l->instance);
+				face_styles->clear();
+			}
+		}
+	}
+
 	return true;
 }
 
@@ -110,13 +165,14 @@ bool OpenCascadeKernel::convert_impl(const taxonomy::shell::ptr shell, IfcGeom::
     return handle_occt_exception([&]() -> bool {
 
 	TopoDS_Shape shape;
-	if (!convert(shell, shape)) {
+	std::vector<taxonomy::style::ptr> face_styles;
+	if (!convert(shell, shape, &face_styles)) {
 		return false;
 	}
 	results.emplace_back(ConversionResult(
 		shell->instance->as<IfcUtil::IfcBaseEntity>()->id(),
 		shell->matrix,
-		new OpenCascadeShape(shape),
+		new OpenCascadeShape(shape, std::move(face_styles)),
 		shell->surface_style
 	));
 	return true;

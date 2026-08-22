@@ -147,7 +147,23 @@ IfcGeom::Representation::Triangulation::Triangulation(const BRep& shape_model)
 			}
 		}
 
-		iit->Shape()->Triangulate(settings(), *iit->Placement(), this, iit->ItemId(), surface_style_id);
+		std::vector<int> face_style_ids;
+		face_style_ids.reserve(iit->Shape()->face_styles().size());
+		for (const auto& face_style : iit->Shape()->face_styles()) {
+			int face_style_id = surface_style_id;
+			if (face_style) {
+				auto fit = std::find(materials_.begin(), materials_.end(), face_style);
+				if (fit == materials_.end()) {
+					face_style_id = (int)materials_.size();
+					materials_.push_back(face_style);
+				} else {
+					face_style_id = (int)(fit - materials_.begin());
+				}
+			}
+			face_style_ids.push_back(face_style_id);
+		}
+
+		iit->Shape()->Triangulate(settings(), *iit->Placement(), this, iit->ItemId(), surface_style_id, face_style_ids);
 	}
 }
 

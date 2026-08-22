@@ -48,6 +48,17 @@ namespace {
 }
 
 void ifcopenshell::geometry::OpenCascadeShape::Triangulate(ifcopenshell::geometry::Settings settings, const ifcopenshell::geometry::taxonomy::matrix4& place, IfcGeom::Representation::Triangulation* t, int item_id, int surface_style_id) const {
+	Triangulate(settings, place, t, item_id, surface_style_id, {});
+}
+
+void ifcopenshell::geometry::OpenCascadeShape::Triangulate(
+	ifcopenshell::geometry::Settings settings,
+	const ifcopenshell::geometry::taxonomy::matrix4& place,
+	IfcGeom::Representation::Triangulation* t,
+	int item_id,
+	int surface_style_id,
+	const std::vector<int>& face_style_ids) const
+{
 
 	// @todo remove duplication with OpenCascadeKernel::convert(const taxonomy::matrix4::ptr matrix, gp_GTrsf& trsf);
 	// above can be static?
@@ -96,6 +107,9 @@ void ifcopenshell::geometry::OpenCascadeShape::Triangulate(ifcopenshell::geometr
 	int num_faces = 0;
 	TopExp_Explorer exp;
 	for (exp.Init(shape_, TopAbs_FACE); exp.More(); exp.Next(), ++num_faces) {
+		const int face_style_id = static_cast<size_t>(num_faces) < face_style_ids.size()
+			? face_style_ids[num_faces]
+			: surface_style_id;
 		TopoDS_Face face = TopoDS::Face(exp.Current());
 
 		size_t num_bounds = 0; 
@@ -131,7 +145,7 @@ void ifcopenshell::geometry::OpenCascadeShape::Triangulate(ifcopenshell::geometr
 				coords.push_back(tri->Node(i).Transformed(loc).XYZ());
 				taxonomy_transform(place.components_, *coords.rbegin());
 				const gp_XYZ& last = *coords.rbegin();
-				dict[i] = t->addVertex(item_id, surface_style_id, last.X(), last.Y(), last.Z());
+				dict[i] = t->addVertex(item_id, face_style_id, last.X(), last.Y(), last.Z());
 
 				if (calculate_normals) {
 					const gp_Pnt2d& uv = tri->UVNode(i);
@@ -196,11 +210,11 @@ void ifcopenshell::geometry::OpenCascadeShape::Triangulate(ifcopenshell::geometr
 					triangle_indices.push_back({ dict[n1], dict[n2], dict[n3] });
 				} else {
 					if (settings.get<settings::TriangulationType>().get() == settings::POLYHEDRON_WITHOUT_HOLES) {
-						t->addFace(item_id, surface_style_id, std::vector<int>{ dict[n1], dict[n2], dict[n3] });
+						t->addFace(item_id, face_style_id, std::vector<int>{ dict[n1], dict[n2], dict[n3] });
 					} else if (settings.get<settings::TriangulationType>().get() == settings::POLYHEDRON_WITH_HOLES) {
-						t->addFace(item_id, surface_style_id, std::vector<std::vector<int>>{{ dict[n1], dict[n2], dict[n3] }});
+						t->addFace(item_id, face_style_id, std::vector<std::vector<int>>{{ dict[n1], dict[n2], dict[n3] }});
 					} else {
-						t->addFace(item_id, surface_style_id, dict[n1], dict[n2], dict[n3]);
+						t->addFace(item_id, face_style_id, dict[n1], dict[n2], dict[n3]);
 
 						t->registerEdgeCount(dict[n1], dict[n2], edgecount);
 						t->registerEdgeCount(dict[n2], dict[n3], edgecount);
@@ -225,11 +239,11 @@ void ifcopenshell::geometry::OpenCascadeShape::Triangulate(ifcopenshell::geometr
 			auto loops = IfcGeom::util::find_boundary_loops(t->verts(), triangle_indices);
 			if (polyhedral_output_without_holes) {
 				if (!loops.empty() && !loops[0].empty()) {
-					t->addFace(item_id, surface_style_id, loops[0]);
+					t->addFace(item_id, face_style_id, loops[0]);
 				}
 			} else {
 				if (!loops.empty()) {
-					t->addFace(item_id, surface_style_id, loops);
+					t->addFace(item_id, face_style_id, loops);
 				}
 			}
 		}
@@ -490,7 +504,7 @@ ConversionResultShape* ifcopenshell::geometry::OpenCascadeShape::wrap_in_compoun
 	BRep_Builder builder;
 	builder.MakeCompound(compound);
 	builder.Add(compound, shape_);
-	return new OpenCascadeShape(std::move(compound));
+	return new OpenCascadeShape(std::move(compound), face_styles_);
 }
 
 std::vector<ConversionResultShape*> ifcopenshell::geometry::OpenCascadeShape::vertices()
@@ -586,7 +600,7 @@ std::pair<OpaqueCoordinate<3>, OpaqueCoordinate<3>> ifcopenshell::geometry::Open
 
 ConversionResultShape* ifcopenshell::geometry::OpenCascadeShape::moved(ifcopenshell::geometry::taxonomy::matrix4::ptr t) const
 {
-	return new OpenCascadeShape(IfcGeom::util::apply_transformation(shape_, *t));
+	return new OpenCascadeShape(IfcGeom::util::apply_transformation(shape_, *t), face_styles_);
 }
 
 namespace {

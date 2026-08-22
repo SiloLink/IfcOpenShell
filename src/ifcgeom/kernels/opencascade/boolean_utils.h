@@ -32,6 +32,8 @@
 
 #include "../ifc_geomlibrary_api.h"
 
+#include <vector>
+
 namespace IfcGeom {
 	namespace util {
 
@@ -92,9 +94,23 @@ namespace IfcGeom {
 			double precision;
 		};
 
-		bool boolean_operation(const boolean_settings& settings, const TopoDS_Shape&, const TopTools_ListOfShape&, BOPAlgo_Operation, TopoDS_Shape&, double fuzziness = -1.);
+		bool boolean_operation(
+			const boolean_settings& settings,
+			const TopoDS_Shape&,
+			const TopTools_ListOfShape&,
+			BOPAlgo_Operation,
+			TopoDS_Shape&,
+			double fuzziness = -1.,
+			std::vector<int>* first_operand_face_sources = nullptr);
 
-		bool boolean_operation(const boolean_settings& settings, const TopoDS_Shape&, const TopoDS_Shape&, BOPAlgo_Operation, TopoDS_Shape&, double fuzziness = -1.);
+		bool boolean_operation(
+			const boolean_settings& settings,
+			const TopoDS_Shape&,
+			const TopoDS_Shape&,
+			BOPAlgo_Operation,
+			TopoDS_Shape&,
+			double fuzziness = -1.,
+			std::vector<int>* first_operand_face_sources = nullptr);
 
 		TopoDS_Shape ensure_fit_for_subtraction(const TopoDS_Shape& shape, double tol);
 	}

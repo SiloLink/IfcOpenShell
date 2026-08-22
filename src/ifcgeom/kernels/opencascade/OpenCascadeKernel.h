@@ -128,7 +128,11 @@ public:
 	bool convert(const ifcopenshell::geometry::taxonomy::face::ptr, TopoDS_Shape&, bool reversed_surface = false);
 	bool convert(const ifcopenshell::geometry::taxonomy::loop::ptr, TopoDS_Wire&);
 	bool convert(const ifcopenshell::geometry::taxonomy::matrix4::ptr, gp_GTrsf&);
-	bool convert(const ifcopenshell::geometry::taxonomy::shell::ptr, TopoDS_Shape&);
+	bool convert(
+		const ifcopenshell::geometry::taxonomy::shell::ptr,
+		TopoDS_Shape&,
+		std::vector<ifcopenshell::geometry::taxonomy::style::ptr>* face_styles = nullptr
+	);
 	bool convert(const ifcopenshell::geometry::taxonomy::solid::ptr, TopoDS_Shape&);
 	bool convert(const ifcopenshell::geometry::taxonomy::loft::ptr, TopoDS_Shape&);
 	bool convert(const ifcopenshell::geometry::taxonomy::bspline_surface::ptr bs, Handle(Geom_Surface) surf);

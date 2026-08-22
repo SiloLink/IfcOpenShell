@@ -254,6 +254,20 @@ namespace IfcGeom {
 	class IFC_GEOM_API ConversionResultShape {
 	public:
 		virtual void Triangulate(ifcopenshell::geometry::Settings settings, const ifcopenshell::geometry::taxonomy::matrix4& place, Representation::Triangulation* t, int item_id, int surface_style_id) const = 0;
+		virtual void Triangulate(
+			ifcopenshell::geometry::Settings settings,
+			const ifcopenshell::geometry::taxonomy::matrix4& place,
+			Representation::Triangulation* t,
+			int item_id,
+			int surface_style_id,
+			const std::vector<int>&) const
+		{
+			Triangulate(settings, place, t, item_id, surface_style_id);
+		}
+		virtual const std::vector<ifcopenshell::geometry::taxonomy::style::ptr>& face_styles() const {
+			static const std::vector<ifcopenshell::geometry::taxonomy::style::ptr> empty;
+			return empty;
+		}
 		IfcGeom::Representation::Triangulation* Triangulate(const ifcopenshell::geometry::Settings& settings) const;
 		virtual void Serialize(const ifcopenshell::geometry::taxonomy::matrix4& place, std::string&) const = 0;
 				

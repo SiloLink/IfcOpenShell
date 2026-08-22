@@ -30,6 +30,7 @@
 
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BOPAlgo_MakerVolume.hxx>
+#include <TopTools_DataMapOfShapeInteger.hxx>
 
 namespace {
 	struct opening_sorter {
@@ -40,6 +41,39 @@ namespace {
 }
 
 using namespace ifcopenshell::geometry;
+
+namespace {
+	bool select_face_styles(
+		const TopoDS_Shape& complete_shape,
+		const std::vector<taxonomy::style::ptr>& complete_styles,
+		const TopoDS_Shape& part,
+		std::vector<taxonomy::style::ptr>& part_styles)
+	{
+		part_styles.clear();
+		if (complete_styles.empty()) {
+			return true;
+		}
+
+		TopTools_DataMapOfShapeInteger source_indices;
+		int source_index = 0;
+		for (TopExp_Explorer exp(complete_shape, TopAbs_FACE); exp.More(); exp.Next(), ++source_index) {
+			if (!source_indices.IsBound(exp.Current())) {
+				source_indices.Bind(exp.Current(), source_index);
+			}
+		}
+		if (static_cast<size_t>(source_index) != complete_styles.size()) {
+			return false;
+		}
+
+		for (TopExp_Explorer exp(part, TopAbs_FACE); exp.More(); exp.Next()) {
+			if (!source_indices.IsBound(exp.Current())) {
+				return false;
+			}
+			part_styles.push_back(complete_styles[source_indices.Find(exp.Current())]);
+		}
+		return true;
+	}
+}
 
 bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geometry::taxonomy::matrix4>>& openings,
 	const IfcGeom::ConversionResults& entity_shapes, const ifcopenshell::geometry::taxonomy::matrix4& entity_trsf, IfcGeom::ConversionResults& cut_shapes) {
@@ -113,6 +147,8 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 		BRep_Builder B;
 		B.MakeCompound(C);
 		TopoDS_Shape combined_result;
+		std::vector<taxonomy::style::ptr> combined_face_styles;
+		const auto& complete_shape = *std::static_pointer_cast<OpenCascadeShape>(it3->Shape());
 
 		std::list<TopoDS_Shape> parts;
 
@@ -134,6 +170,14 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 		}
 
 		for (auto entity_part : parts) {
+			std::vector<taxonomy::style::ptr> entity_part_styles;
+			if (!select_face_styles(
+					complete_shape.shape(), complete_shape.face_styles(), entity_part, entity_part_styles)) {
+				Logger::Message(
+					Logger::LOG_ERROR, "Opening subtraction face styles do not match source faces", entity);
+				return false;
+			}
+
 			bool is_manifold = util::is_manifold(entity_part);
 
 			if (!is_manifold) {
@@ -154,6 +198,7 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 			}
 
 			TopoDS_Shape entity_part_result;
+			std::vector<taxonomy::style::ptr> entity_part_result_styles;
 
 			for (int as_shell = 0; as_shell < 2; ++as_shell) {
 				TopoDS_Shape entity_shape_unlocated;
@@ -161,6 +206,16 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 					entity_shape_unlocated = entity_part;
 				} else {
 					entity_shape_unlocated = util::ensure_fit_for_subtraction(entity_part, settings_.get<settings::Precision>().get());
+				}
+				std::vector<taxonomy::style::ptr> result_face_styles;
+				if (!select_face_styles(
+						entity_part, entity_part_styles, entity_shape_unlocated, result_face_styles)) {
+					if (!as_shell) {
+						continue;
+					}
+					Logger::Message(
+						Logger::LOG_ERROR, "Opening subtraction could not match prepared source faces", entity);
+					return false;
 				}
 				const auto& m = it3->Placement()->ccomponents();
 				// @todo
@@ -189,7 +244,23 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 						}
 
 						TopoDS_Shape intermediate_result;
-						if (util::boolean_operation(bst, result, opening_list, BOPAlgo_CUT, intermediate_result)) {
+						std::vector<int> face_sources;
+						auto sources = result_face_styles.empty() ? nullptr : &face_sources;
+						if (util::boolean_operation(
+								bst, result, opening_list, BOPAlgo_CUT, intermediate_result, -1., sources)) {
+							if (sources) {
+								std::vector<taxonomy::style::ptr> intermediate_styles;
+								intermediate_styles.reserve(face_sources.size());
+								for (int source : face_sources) {
+									if (source >= static_cast<int>(result_face_styles.size())) {
+										Logger::Message(Logger::LOG_ERROR,
+											"Opening subtraction returned an invalid face style source", entity);
+										return false;
+									}
+									intermediate_styles.push_back(source < 0 ? nullptr : result_face_styles[source]);
+								}
+								result_face_styles = std::move(intermediate_styles);
+							}
 							result = intermediate_result;
 						} else {
 							Logger::Message(Logger::LOG_ERROR, "Opening subtraction failed for " + boost::lexical_cast<std::string>(std::distance(jt, it)) + " openings", entity);
@@ -219,6 +290,7 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 				}
 
 				entity_part_result = result;
+				entity_part_result_styles = std::move(result_face_styles);
 
 				// For manifold first operands we're not even going to try if processing
 				// as loose faces gives a better result.
@@ -227,8 +299,11 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 
 			if (is_multiple) {
 				B.Add(C, entity_part_result);
+				combined_face_styles.insert(
+					combined_face_styles.end(), entity_part_result_styles.begin(), entity_part_result_styles.end());
 			} else {
 				combined_result = entity_part_result;
+				combined_face_styles = std::move(entity_part_result_styles);
 			}
 
 		}
@@ -237,7 +312,16 @@ bool IfcGeom::OpenCascadeKernel::convert_openings(const IfcUtil::IfcBaseEntity* 
 			combined_result = C;
 		}
 
-		cut_shapes.push_back(IfcGeom::ConversionResult(it3->ItemId(), new OpenCascadeShape(combined_result), it3->StylePtr()));
+		if (!complete_shape.face_styles().empty()
+				&& combined_face_styles.size() != static_cast<size_t>(util::count(combined_result, TopAbs_FACE))) {
+			Logger::Message(
+				Logger::LOG_ERROR, "Opening subtraction face styles do not match result faces", entity);
+			return false;
+		}
+		cut_shapes.push_back(IfcGeom::ConversionResult(
+			it3->ItemId(),
+			new OpenCascadeShape(combined_result, std::move(combined_face_styles)),
+			it3->StylePtr()));
 	}
 	return true;
 }
