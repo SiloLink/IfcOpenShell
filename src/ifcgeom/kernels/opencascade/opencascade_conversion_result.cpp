@@ -49,8 +49,14 @@ namespace {
 ifcopenshell::geom::open_cascade_shape::open_cascade_shape(const TopoDS_Shape& shape)
 	: shape_(shape) {}
 
+ifcopenshell::geom::open_cascade_shape::open_cascade_shape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles)
+	: shape_(shape), face_styles_(std::move(face_styles)) {}
+
 ifcopenshell::geom::open_cascade_shape::open_cascade_shape(TopoDS_Shape&& shape)
 	: shape_(std::move(shape)) {}
+
+ifcopenshell::geom::open_cascade_shape::open_cascade_shape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles)
+	: shape_(std::move(shape)), face_styles_(std::move(face_styles)) {}
 
 const TopoDS_Shape& ifcopenshell::geom::open_cascade_shape::shape() const {
 	return shape_;
@@ -65,10 +71,21 @@ std::string_view ifcopenshell::geom::open_cascade_shape::backend_id() const {
 }
 
 ifcopenshell::geom::conversion_result_shape* ifcopenshell::geom::open_cascade_shape::clone() const {
-	return new open_cascade_shape(shape_);
+	return new open_cascade_shape(shape_, face_styles_);
 }
 
 void ifcopenshell::geom::open_cascade_shape::triangulate(ifcopenshell::geom::settings settings, const ifcopenshell::geom::taxonomy::matrix4& place, ifcopenshell::geom::triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger& logger) const {
+	triangulate(settings, place, t, item_id, surface_style_id, {}, logger);
+}
+
+void ifcopenshell::geom::open_cascade_shape::triangulate(
+	ifcopenshell::geom::settings settings,
+	const ifcopenshell::geom::taxonomy::matrix4& place,
+	ifcopenshell::geom::triangulation* t,
+	int item_id,
+	int surface_style_id,
+	const std::vector<int>& face_style_ids,
+	ifcopenshell::logger& logger) const {
 
 	// @todo remove duplication with open_cascade_kernel::convert(const taxonomy::matrix4::ptr matrix, gp_GTrsf& trsf);
 	// above can be static?
@@ -117,6 +134,9 @@ void ifcopenshell::geom::open_cascade_shape::triangulate(ifcopenshell::geom::set
 	int num_faces = 0;
 	TopExp_Explorer exp;
 	for (exp.Init(shape_, TopAbs_FACE); exp.More(); exp.Next(), ++num_faces) {
+		const int face_style_id = static_cast<size_t>(num_faces) < face_style_ids.size()
+			? face_style_ids[num_faces]
+			: surface_style_id;
 		TopoDS_Face face = TopoDS::Face(exp.Current());
 
 		size_t num_bounds = 0;
@@ -152,7 +172,7 @@ void ifcopenshell::geom::open_cascade_shape::triangulate(ifcopenshell::geom::set
 				coords.push_back(tri->Node(i).Transformed(loc).XYZ());
 				taxonomy_transform(place.components_, *coords.rbegin());
 				const gp_XYZ& last = *coords.rbegin();
-				dict[i] = t->addVertex(item_id, surface_style_id, last.X(), last.Y(), last.Z());
+				dict[i] = t->addVertex(item_id, face_style_id, last.X(), last.Y(), last.Z());
 
 				if (calculate_normals) {
 					const gp_Pnt2d& uv = tri->UVNode(i);
@@ -217,11 +237,11 @@ void ifcopenshell::geom::open_cascade_shape::triangulate(ifcopenshell::geom::set
 					triangle_indices.push_back({ dict[n1], dict[n2], dict[n3] });
 				} else {
 					if (settings.get<settings::TriangulationType>().get() == settings::POLYHEDRON_WITHOUT_HOLES) {
-						t->addFace(item_id, surface_style_id, std::vector<int>{ dict[n1], dict[n2], dict[n3] });
+						t->addFace(item_id, face_style_id, std::vector<int>{ dict[n1], dict[n2], dict[n3] });
 					} else if (settings.get<settings::TriangulationType>().get() == settings::POLYHEDRON_WITH_HOLES) {
-						t->addFace(item_id, surface_style_id, std::vector<std::vector<int>>{{ dict[n1], dict[n2], dict[n3] }});
+						t->addFace(item_id, face_style_id, std::vector<std::vector<int>>{{ dict[n1], dict[n2], dict[n3] }});
 					} else {
-						t->addFace(item_id, surface_style_id, dict[n1], dict[n2], dict[n3]);
+						t->addFace(item_id, face_style_id, dict[n1], dict[n2], dict[n3]);
 
 						t->registerEdgeCount(dict[n1], dict[n2], edgecount);
 						t->registerEdgeCount(dict[n2], dict[n3], edgecount);
@@ -246,11 +266,11 @@ void ifcopenshell::geom::open_cascade_shape::triangulate(ifcopenshell::geom::set
 			auto loops = ifcopenshell::geom::util::find_boundary_loops(t->verts(), triangle_indices);
 			if (polyhedral_output_without_holes) {
 				if (!loops.empty() && !loops[0].empty()) {
-					t->addFace(item_id, surface_style_id, loops[0]);
+					t->addFace(item_id, face_style_id, loops[0]);
 				}
 			} else {
 				if (!loops.empty()) {
-					t->addFace(item_id, surface_style_id, loops);
+					t->addFace(item_id, face_style_id, loops);
 				}
 			}
 		}
@@ -511,7 +531,7 @@ conversion_result_shape* ifcopenshell::geom::open_cascade_shape::wrap_in_compoun
 	BRep_Builder builder;
 	builder.MakeCompound(compound);
 	builder.Add(compound, shape_);
-	return new open_cascade_shape(std::move(compound));
+	return new open_cascade_shape(std::move(compound), face_styles_);
 }
 
 std::vector<conversion_result_shape*> ifcopenshell::geom::open_cascade_shape::vertices()
@@ -607,7 +627,7 @@ std::pair<opaque_coordinate<3>, opaque_coordinate<3>> ifcopenshell::geom::open_c
 
 conversion_result_shape* ifcopenshell::geom::open_cascade_shape::moved(ifcopenshell::geom::taxonomy::matrix4::ptr t) const
 {
-	return new open_cascade_shape(ifcopenshell::geom::util::apply_transformation(shape_, *t));
+	return new open_cascade_shape(ifcopenshell::geom::util::apply_transformation(shape_, *t), face_styles_);
 }
 
 namespace {

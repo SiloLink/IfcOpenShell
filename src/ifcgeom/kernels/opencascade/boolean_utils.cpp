@@ -26,9 +26,67 @@
 #include <BRepCheck.hxx>
 #include <ShapeAnalysis_Edge.hxx>
 #include <Bnd_OBB.hxx>
+#include <TopTools_DataMapOfShapeInteger.hxx>
 
 #include <vector>
 #include <thread>
+
+namespace {
+	bool map_first_operand_face_sources(
+		BRepAlgoAPI_BooleanOperation& builder,
+		const TopoDS_Shape& input,
+		const TopoDS_Shape& output,
+		std::vector<int>& output_sources)
+	{
+		TopTools_IndexedMapOfShape output_faces;
+		TopExp::MapShapes(output, TopAbs_FACE, output_faces);
+		TopTools_DataMapOfShapeInteger source_by_output_face;
+
+		auto bind_source = [&](const TopoDS_Shape& face, int source_index) {
+			if (face.ShapeType() != TopAbs_FACE || !output_faces.Contains(face)) {
+				return true;
+			}
+			if (source_by_output_face.IsBound(face)) {
+				return source_by_output_face.Find(face) == source_index;
+			}
+			source_by_output_face.Bind(face, source_index);
+			return true;
+		};
+
+		int source_index = 0;
+		for (TopExp_Explorer exp(input, TopAbs_FACE); exp.More(); exp.Next(), ++source_index) {
+			const TopoDS_Shape& input_face = exp.Current();
+			bool has_output = output_faces.Contains(input_face);
+			if (has_output && !bind_source(input_face, source_index)) {
+				return false;
+			}
+
+			const TopTools_ListOfShape& modified = builder.Modified(input_face);
+			for (TopTools_ListIteratorOfListOfShape it(modified); it.More(); it.Next()) {
+				if (output_faces.Contains(it.Value())) {
+					has_output = true;
+					if (!bind_source(it.Value(), source_index)) {
+						return false;
+					}
+				}
+			}
+
+			if (!has_output && !builder.IsDeleted(input_face)) {
+				return false;
+			}
+		}
+
+		output_sources.clear();
+		output_sources.reserve(output_faces.Extent());
+		for (TopExp_Explorer exp(output, TopAbs_FACE); exp.More(); exp.Next()) {
+			output_sources.push_back(
+				source_by_output_face.IsBound(exp.Current())
+					? source_by_output_face.Find(exp.Current())
+					: -1);
+		}
+		return true;
+	}
+}
 
 void ifcopenshell::geom::util::copy_operand(const NCollection_List<TopoDS_Shape>& l, NCollection_List<TopoDS_Shape>& r) {
 #if OCC_VERSION_HEX < 0x70000
@@ -832,14 +890,21 @@ bool ifcopenshell::geom::util::points_on_planar_face_generator::operator()(gp_Pn
 }
 
 
-bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& settings, const TopoDS_Shape& a_input, const NCollection_List<TopoDS_Shape>& b_input, BOPAlgo_Operation op, TopoDS_Shape& result, double fuzziness) {
+bool ifcopenshell::geom::util::boolean_operation(
+	const boolean_settings& settings,
+	const TopoDS_Shape& a_input,
+	const NCollection_List<TopoDS_Shape>& b_input,
+	BOPAlgo_Operation op,
+	TopoDS_Shape& result,
+	double fuzziness,
+	std::vector<int>* first_operand_face_sources) {
 	using namespace std::string_literals;
 
-	const bool do_unify = true;
+	const bool do_unify = first_operand_face_sources == nullptr;
 	const bool do_subtraction_eliminate_disjoint_bbox = true;
 	const bool do_subtraction_eliminate_touching = true;
 	const bool do_eliminate_narrow_obb = true;
-	const bool do_attempt_2d_boolean = settings.attempt_2d;
+	const bool do_attempt_2d_boolean = settings.attempt_2d && first_operand_face_sources == nullptr;
 	const bool debug = settings.debug;
 
 	std::string debug_identifier;
@@ -962,6 +1027,13 @@ bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& setting
 	if (b.Extent() == 0) {
 		settings.log().warning("GEO", 132, "No other operands remaining, using first operand");
 		result = a;
+		if (first_operand_face_sources) {
+			first_operand_face_sources->clear();
+			int source_index = 0;
+			for (TopExp_Explorer exp(a, TopAbs_FACE); exp.More(); exp.Next()) {
+				first_operand_face_sources->push_back(source_index++);
+			}
+		}
 		return true;
 	}
 
@@ -1098,7 +1170,8 @@ bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& setting
 					PERF("boolean operation: 2d");
 					// Retry using generic 2d using boolean algo on faces
 
-					boolean_op_2d_success = boolean_operation(settings, a_face, b_faces, op, face_result, fuzziness);
+					boolean_op_2d_success = boolean_operation(
+						settings, a_face, b_faces, op, face_result, fuzziness, first_operand_face_sources);
 				}
 
 				if (boolean_op_2d_success) {
@@ -1150,7 +1223,7 @@ bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& setting
 		} else {
 			TopoDS_Shape r = *builder;
 
-			{
+			if (!first_operand_face_sources) {
 				PERF("boolean operation: shape healing");
 
 				ShapeFix_Shape fix(r);
@@ -1370,6 +1443,13 @@ bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& setting
 						}
 					}
 
+					if (success && first_operand_face_sources && !map_first_operand_face_sources(
+							*builder, a, r, *first_operand_face_sources)) {
+						settings.log().notice(
+							"Boolean operation discarded because first operand face history is incomplete");
+						success = false;
+					}
+
 					if (success) {
 						result = r;
 					}
@@ -1403,7 +1483,8 @@ bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& setting
 	}
 	if (!success) {
 		if (allow_retry) {
-			return boolean_operation(settings, a, b, op, result, new_fuzziness);
+			return boolean_operation(
+				settings, a, b, op, result, new_fuzziness, first_operand_face_sources);
 		} else {
 			settings.log().notice("GEO", 154, "No longer attempting boolean operation with higher fuzziness");
 		}
@@ -1411,10 +1492,17 @@ bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& setting
 	return success && !result.IsNull();
 }
 
-bool ifcopenshell::geom::util::boolean_operation(const boolean_settings& settings, const TopoDS_Shape& a, const TopoDS_Shape& b, BOPAlgo_Operation op, TopoDS_Shape& result, double fuzziness) {
+bool ifcopenshell::geom::util::boolean_operation(
+	const boolean_settings& settings,
+	const TopoDS_Shape& a,
+	const TopoDS_Shape& b,
+	BOPAlgo_Operation op,
+	TopoDS_Shape& result,
+	double fuzziness,
+	std::vector<int>* first_operand_face_sources) {
 	NCollection_List<TopoDS_Shape> bs;
 	bs.Append(b);
-	return boolean_operation(settings, a, bs, op, result, fuzziness);
+	return boolean_operation(settings, a, bs, op, result, fuzziness, first_operand_face_sources);
 }
 
 TopoDS_Shape ifcopenshell::geom::util::ensure_fit_for_subtraction(const TopoDS_Shape& shape, double tol) {

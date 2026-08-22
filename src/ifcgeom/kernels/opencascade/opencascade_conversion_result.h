@@ -43,13 +43,24 @@ namespace ifcopenshell {
 		class IFC_GEOMLIBRARY_API open_cascade_shape : public ifcopenshell::geom::conversion_result_shape {
 		public:
 			open_cascade_shape(const TopoDS_Shape& shape);
+			open_cascade_shape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles);
 			open_cascade_shape(TopoDS_Shape&& shape);
+			open_cascade_shape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles);
 
 			const TopoDS_Shape& shape() const;
 			operator const TopoDS_Shape& ();
 			virtual std::string_view backend_id() const;
+			const std::vector<taxonomy::style::ptr>& face_styles() const override { return face_styles_; }
 
 			virtual void triangulate(ifcopenshell::geom::settings settings, const ifcopenshell::geom::taxonomy::matrix4& place, ifcopenshell::geom::triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger& logger = ifcopenshell::logger::root()) const;
+			virtual void triangulate(
+				ifcopenshell::geom::settings settings,
+				const ifcopenshell::geom::taxonomy::matrix4& place,
+				ifcopenshell::geom::triangulation* t,
+				int item_id,
+				int surface_style_id,
+				const std::vector<int>& face_style_ids,
+				ifcopenshell::logger& logger = ifcopenshell::logger::root()) const;
 			virtual void serialize(const ifcopenshell::geom::taxonomy::matrix4& place, std::string&) const;
 
 			virtual ifcopenshell::geom::conversion_result_shape* clone() const;
@@ -102,6 +113,7 @@ namespace ifcopenshell {
 			virtual bool surface_area_along_direction(double tol, const ifcopenshell::geom::taxonomy::matrix4::ptr&, double& along_x, double& along_y, double& along_z) const;
 		private:
 			TopoDS_Shape shape_;
+			std::vector<taxonomy::style::ptr> face_styles_;
 		};
 
 	}

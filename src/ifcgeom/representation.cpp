@@ -147,7 +147,24 @@ ifcopenshell::geom::triangulation::triangulation(const native& shape_model)
 			}
 		}
 
-		iit->shape()->triangulate(settings(), *iit->placement(), this, iit->ItemId(), surface_style_id);
+		std::vector<int> face_style_ids;
+		face_style_ids.reserve(iit->shape()->face_styles().size());
+		for (const auto& face_style : iit->shape()->face_styles()) {
+			int face_style_id = surface_style_id;
+			if (face_style) {
+				auto fit = std::find(materials_.begin(), materials_.end(), face_style);
+				if (fit == materials_.end()) {
+					face_style_id = (int)materials_.size();
+					materials_.push_back(face_style);
+				} else {
+					face_style_id = (int)(fit - materials_.begin());
+				}
+			}
+			face_style_ids.push_back(face_style_id);
+		}
+
+		iit->shape()->triangulate(
+			settings(), *iit->placement(), this, iit->ItemId(), surface_style_id, face_style_ids);
 	}
 }
 

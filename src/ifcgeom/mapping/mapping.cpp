@@ -279,9 +279,14 @@ void mapping::get_representations(std::vector<geometry_conversion_task>& tasks, 
         bool representation_processed_as_mapped_item = false;
         auto representation_mapped_to_result = representation_mapped_to(representation);
         if (representation_mapped_to_result) {
+            IfcSchema::IfcRepresentationMap mapped_rmap;
+            auto mapped_ifcproducts = filter_products(
+                products_represented_by(representation_mapped_to_result, mapped_rmap),
+                filters
+            );
             representation_processed_as_mapped_item = geometry_reuse_ok_for_current_representation_ && (
                 std::find(ok_mapped_representations.begin(), ok_mapped_representations.end(), representation_mapped_to_result) != ok_mapped_representations.end() ||
-                reuse_ok_(products_represented_by(representation_mapped_to_result, rmap)));
+                reuse_ok_(mapped_ifcproducts));
         }
 
         if (representation_processed_as_mapped_item) {

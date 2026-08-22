@@ -385,7 +385,7 @@ class iterator(ifcopenshell_wrapper.iterator):
                     break
 
     def get_task_products(self):
-        return entity_instance.wrap_value(ifcopenshell_wrapper.iterator.get_task_products(self), self.file)
+        return ifcopenshell_wrapper.iterator.get_task_products(self)
 
 
 ClashType = Literal["protrusion", "pierce", "collision", "clearance"]

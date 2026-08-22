@@ -2,6 +2,8 @@
 
 #include "base_utils.h"
 
+#include <algorithm>
+
 using namespace ifcopenshell::geom;
 using namespace ifcopenshell::geom::kernels;
 using namespace ifcopenshell::geom::util;
@@ -23,7 +25,11 @@ namespace {
 	}
 }
 
-bool open_cascade_kernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& shape) {
+bool open_cascade_kernel::convert(
+	const taxonomy::shell::ptr l,
+	TopoDS_Shape& shape,
+	std::vector<taxonomy::style::ptr>* face_styles
+) {
 	std::unique_ptr<faceset_helper> helper_scope;
 	if (shell_polyhedral(l)) {
 		helper_scope.reset(new faceset_helper(this, l));
@@ -38,6 +44,7 @@ bool open_cascade_kernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& sh
 		: minimal_face_area;
 
 	NCollection_List<TopoDS_Shape> face_list;
+	std::vector<std::pair<TopoDS_Face, taxonomy::style::ptr>> source_faces;
 	for (auto& face : l->children) {
 		bool success = false;
 		TopoDS_Face occ_face;
@@ -69,6 +76,9 @@ bool open_cascade_kernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& sh
 					const TopoDS_Face& triangle = TopoDS::Face(face_it.Value());
 					if (face_area(triangle) > min_face_area) {
 						face_list.Append(triangle);
+						if (face_styles) {
+							source_faces.emplace_back(triangle, face->surface_style);
+						}
 					} else {
 						logger_.message(ifcopenshell::logger::LOG_WARNING, "GEO", 199, "Degenerate face:", face->instance);
 					}
@@ -77,6 +87,9 @@ bool open_cascade_kernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& sh
 		} else {
 			if (face_area(occ_face) > min_face_area) {
 				face_list.Append(occ_face);
+				if (face_styles) {
+					source_faces.emplace_back(occ_face, face->surface_style);
+				}
 			} else {
 				logger_.message(ifcopenshell::logger::LOG_WARNING, "GEO", 200, "Degenerate face:", face->instance);
 			}
@@ -102,6 +115,50 @@ bool open_cascade_kernel::convert(const taxonomy::shell::ptr l, TopoDS_Shape& sh
 		shape = compound;
 	}
 
+	if (face_styles) {
+		face_styles->clear();
+		const bool has_face_styles = std::any_of(
+			source_faces.begin(),
+			source_faces.end(),
+			[](const auto& source) { return !!source.second; });
+		if (has_face_styles) {
+			std::vector<bool> matched_sources(source_faces.size(), false);
+			TopExp_Explorer output_faces(shape, TopAbs_FACE);
+			for (; output_faces.More(); output_faces.Next()) {
+				const auto& output_face = TopoDS::Face(output_faces.Current());
+				int match = -1;
+				for (size_t i = 0; i < source_faces.size(); ++i) {
+					if (output_face.IsSame(source_faces[i].first)) {
+						if (match != -1) {
+							match = -2;
+							break;
+						}
+						match = static_cast<int>(i);
+					}
+				}
+
+				if (match >= 0) {
+					face_styles->push_back(source_faces[match].second);
+					matched_sources[match] = true;
+				} else {
+					face_styles->push_back(nullptr);
+				}
+			}
+
+			bool lost_style = false;
+			for (size_t i = 0; i < source_faces.size(); ++i) {
+				if (source_faces[i].second && !matched_sources[i]) {
+					lost_style = true;
+					break;
+				}
+			}
+			if (lost_style) {
+				logger_.warning("Unable to preserve all face styles after shell conversion", l->instance);
+				face_styles->clear();
+			}
+		}
+	}
+
 	return true;
 }
 
@@ -109,13 +166,14 @@ bool open_cascade_kernel::convert_impl(const taxonomy::shell::ptr shell, std::ve
     return handle_occt_exception([&]() -> bool {
 
 	TopoDS_Shape shape;
-	if (!convert(shell, shape)) {
+	std::vector<taxonomy::style::ptr> face_styles;
+	if (!convert(shell, shape, &face_styles)) {
 		return false;
 	}
 	results.emplace_back(conversion_result(
 		shell->instance.id(),
 		shell->matrix,
-		new open_cascade_shape(shape),
+		new open_cascade_shape(shape, std::move(face_styles)),
 		shell->surface_style
 	));
 	return true;

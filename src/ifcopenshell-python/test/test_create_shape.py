@@ -74,6 +74,454 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         assert len(edges) == 12  # Cube has 12 edges.
         assert len(edges_item_ids) == len(edges)
 
+    @pytest.mark.parametrize(
+        "geometry_library",
+        ("opencascade", "hybrid-cgal-simple-opencascade-cgal"),
+    )
+    def test_indexed_colours_follow_polygon_faces_after_triangulation(self, geometry_library):
+        ifc_file = ifcopenshell.file(schema="IFC4")
+        project = ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None)
+        origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
+        axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
+        project.RepresentationContexts = [context]
+
+        points = ifc_file.createIfcCartesianPointList3D(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+                (1.0, 0.0, 1.0),
+                (0.0, 1.0, 1.0),
+            )
+        )
+        polygonal_faces = [
+            ifc_file.createIfcIndexedPolygonalFace((1, 2, 3, 4)),
+            ifc_file.createIfcIndexedPolygonalFace((5, 6, 7)),
+        ]
+        face_set = ifc_file.createIfcPolygonalFaceSet(points, False, polygonal_faces, None)
+        colours = ifc_file.createIfcColourRgbList(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+        ifc_file.createIfcIndexedColourMap(face_set, 0.6, colours, (1, 2))
+        representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
+
+        settings = ifcopenshell.geom.settings()
+        settings.set("apply-default-materials", False)
+        shape = ifcopenshell.geom.create_shape(
+            settings, representation, geometry_library=geometry_library
+        )
+
+        faces = ifcopenshell.util.shape.get_faces(shape)
+        material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
+        materials = ifcopenshell.util.shape.get_material_colors(shape)
+        face_colours = [tuple(round(float(channel), 6) for channel in materials[index]) for index in material_ids]
+
+        assert len(faces) == 3
+        assert set(ifcopenshell.util.shape.get_faces_representation_item_ids(shape)) == {face_set.id()}
+        assert sorted(face_colours) == [(0.0, 1.0, 0.0, 0.6), (1.0, 0.0, 0.0, 0.6), (1.0, 0.0, 0.0, 0.6)]
+
+    def test_indexed_colours_survive_opening_subtraction(self):
+        def make_face_set(coordinates):
+            points = ifc_file.createIfcCartesianPointList3D(coordinates)
+            faces = tuple(
+                ifc_file.createIfcIndexedPolygonalFace(indices)
+                for indices in (
+                    (1, 4, 3, 2),
+                    (5, 6, 7, 8),
+                    (1, 2, 6, 5),
+                    (4, 8, 7, 3),
+                    (1, 5, 8, 4),
+                    (2, 3, 7, 6),
+                )
+            )
+            return ifc_file.createIfcPolygonalFaceSet(points, True, faces, None)
+
+        ifc_file = ifcopenshell.file(schema="IFC4")
+        origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
+        axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
+        context = ifc_file.createIfcGeometricRepresentationContext(
+            None, "Model", 3, 1e-5, axis, None
+        )
+        ifc_file.createIfcProject(
+            ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None
+        )
+        placement = ifc_file.createIfcLocalPlacement(None, axis)
+        host = make_face_set(
+            (
+                (0.0, 0.0, 0.0),
+                (4.0, 0.0, 0.0),
+                (4.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 3.0),
+                (4.0, 0.0, 3.0),
+                (4.0, 1.0, 3.0),
+                (0.0, 1.0, 3.0),
+            )
+        )
+        palette = (
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 1.0, 0.0),
+            (1.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0),
+        )
+        colours = ifc_file.createIfcColourRgbList(palette)
+        ifc_file.createIfcIndexedColourMap(host, 0.8, colours, (1, 2, 3, 4, 5, 6))
+        host_representation = ifc_file.createIfcShapeRepresentation(
+            context, "Body", "Tessellation", (host,)
+        )
+        wall = ifc_file.createIfcWall(
+            ifcopenshell.guid.new(),
+            None,
+            "Wall",
+            None,
+            None,
+            placement,
+            ifc_file.createIfcProductDefinitionShape(None, None, (host_representation,)),
+            None,
+            None,
+        )
+        void = make_face_set(
+            (
+                (1.0, -0.1, 1.0),
+                (3.0, -0.1, 1.0),
+                (3.0, 1.1, 1.0),
+                (1.0, 1.1, 1.0),
+                (1.0, -0.1, 2.0),
+                (3.0, -0.1, 2.0),
+                (3.0, 1.1, 2.0),
+                (1.0, 1.1, 2.0),
+            )
+        )
+        void_representation = ifc_file.createIfcShapeRepresentation(
+            context, "Body", "Tessellation", (void,)
+        )
+        opening = ifc_file.createIfcOpeningElement(
+            ifcopenshell.guid.new(),
+            None,
+            "Opening",
+            None,
+            None,
+            ifc_file.createIfcLocalPlacement(placement, axis),
+            ifc_file.createIfcProductDefinitionShape(None, None, (void_representation,)),
+            None,
+            None,
+        )
+        ifc_file.createIfcRelVoidsElement(
+            ifcopenshell.guid.new(), None, None, None, wall, opening
+        )
+
+        settings = ifcopenshell.geom.settings()
+        settings.set("apply-default-materials", False)
+        shape = ifcopenshell.geom.create_shape(
+            settings,
+            wall,
+            geometry_library="hybrid-cgal-simple-opencascade-cgal",
+        )
+        material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape.geometry)
+        materials = ifcopenshell.util.shape.get_material_colors(shape.geometry)
+        vertices = ifcopenshell.util.shape.get_vertices(shape.geometry)
+        faces = ifcopenshell.util.shape.get_faces(shape.geometry)
+        actual = {
+            tuple(round(float(channel), 6) for channel in materials[index])
+            for index in material_ids
+            if index >= 0
+        }
+        expected = {(*colour, 0.8) for colour in palette}
+
+        boundary_colours = []
+        for axis_index, coordinate in (
+            (2, 0.0),
+            (2, 3.0),
+            (1, 0.0),
+            (1, 1.0),
+            (0, 0.0),
+            (0, 4.0),
+        ):
+            boundary_colours.append(
+                {
+                    tuple(round(float(channel), 6) for channel in materials[material_id])
+                    for face, material_id in zip(faces, material_ids)
+                    if material_id >= 0
+                    and all(abs(float(vertices[index][axis_index]) - coordinate) < 1e-6 for index in face)
+                }
+            )
+
+        assert len(material_ids) == 32
+        assert -1 in material_ids
+        assert actual == expected
+        assert boundary_colours == [{(*colour, 0.8)} for colour in palette]
+
+    def test_indexed_colours_survive_opening_processing_for_nearly_coincident_face_set(self):
+        ifc_file = ifcopenshell.file(schema="IFC4")
+        origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
+        axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
+        context = ifc_file.createIfcGeometricRepresentationContext(
+            None, "Model", 3, 1e-5, axis, None
+        )
+        ifc_file.createIfcProject(
+            ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None
+        )
+        placement = ifc_file.createIfcLocalPlacement(None, axis)
+
+        coordinates = (
+            (1.640000408390691, 0.022681824835978, 0.557061086792769),
+            (1.640000408390691, 0.018927687707254, 0.557061086792769),
+            (1.740000659060463, 0.018927687707262, 0.557061086792769),
+            (1.740000659060463, 0.022681824835978, 0.557061086792769),
+            (1.640000408390691, 0.018927687707254, 0.520538737857773),
+            (1.640000408390691, 0.022681824835978, 0.524042694680803),
+            (1.640000408390698, 0.023010180472617, 0.524005324449751),
+            (1.640000408390691, 0.104999999999997, 0.514670205772497),
+            (1.640000408390691, 0.104999999999997, 0.489744853696384),
+            (1.640000408390691, 0.101241721424906, 0.489744853696384),
+            (1.640000408390691, 0.101241721424906, 0.511166721110848),
+            (1.640000408390691, 0.023000593718599, 0.520075075873156),
+            (4.120165585406163, 0.018927687707262, 0.520538737857773),
+            (4.120165585406163, 0.018927687707262, 0.557061086792769),
+            (3.605000145273927, 0.018927687707262, 0.557061086792769),
+            (3.605000145273927, 0.018927687707262, 0.53),
+            (1.740000659060463, 0.018927687707262, 0.53),
+            (1.740000659060463, 0.022681824835978, 0.53),
+            (3.605000145273927, 0.022681824835978, 0.53),
+            (3.605000145273927, 0.022681824835978, 0.557061086792769),
+            (4.120165585406163, 0.022681824835978, 0.557061086792769),
+            (4.120165585406163, 0.022681824835978, 0.524042694680803),
+            (4.120165585406163, 0.023025586176352, 0.524003573717252),
+            (3.969999857057502, 0.023024653412378, 0.524003679923738),
+            (3.969999347862419, 0.104999999999997, 0.514670205772497),
+            (3.969999347862419, 0.104999999999997, 0.489744853696384),
+            (3.969999371207209, 0.101241721424906, 0.489744853696384),
+            (3.969999371207209, 0.101241721424906, 0.511166721110848),
+            (3.969999857057502, 0.023024653412378, 0.5200722736815),
+            (4.120165585406156, 0.023000041888999, 0.520075075873156),
+        )
+        face_indices = (
+            (1, 2, 3, 4),
+            (5, 2, 1, 6, 7, 8, 9, 10, 11, 12),
+            (2, 5, 13, 14, 15, 16, 17, 3),
+            (3, 17, 18, 4),
+            (6, 1, 4, 18, 19, 20, 21, 22),
+            (7, 6, 22, 23),
+            (8, 7, 23, 24, 25),
+            (9, 8, 25, 26),
+            (10, 9, 26, 27),
+            (11, 10, 27, 28),
+            (12, 11, 28, 29, 30),
+            (5, 12, 30, 13),
+            (30, 23, 22, 21, 14, 13),
+            (15, 14, 21, 20),
+            (15, 20, 19, 16),
+            (16, 19, 18, 17),
+            (23, 30, 29, 24),
+            (26, 25, 24, 29, 28, 27),
+        )
+        points = ifc_file.createIfcCartesianPointList3D(coordinates)
+        faces = tuple(ifc_file.createIfcIndexedPolygonalFace(indices) for indices in face_indices)
+        face_set = ifc_file.createIfcPolygonalFaceSet(points, True, faces, None)
+        colours = ifc_file.createIfcColourRgbList(
+            ((1.0, 1.0, 1.0), (0.47, 0.52, 0.47), (0.69, 0.59, 0.48))
+        )
+        ifc_file.createIfcIndexedColourMap(
+            face_set,
+            1.0,
+            colours,
+            (1, 2, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1),
+        )
+        representation = ifc_file.createIfcShapeRepresentation(
+            context, "Body", "Tessellation", (face_set,)
+        )
+        wall = ifc_file.createIfcWall(
+            ifcopenshell.guid.new(),
+            None,
+            "Wall",
+            None,
+            None,
+            placement,
+            ifc_file.createIfcProductDefinitionShape(None, None, (representation,)),
+            None,
+            None,
+        )
+
+        opening_points = ifc_file.createIfcCartesianPointList3D(
+            (
+                (2.0, 0.0, 0.50),
+                (2.5, 0.0, 0.50),
+                (2.5, 0.12, 0.50),
+                (2.0, 0.12, 0.50),
+                (2.0, 0.0, 0.55),
+                (2.5, 0.0, 0.55),
+                (2.5, 0.12, 0.55),
+                (2.0, 0.12, 0.55),
+            )
+        )
+        opening_faces = tuple(
+            ifc_file.createIfcIndexedPolygonalFace(indices)
+            for indices in (
+                (1, 4, 3, 2),
+                (5, 6, 7, 8),
+                (1, 2, 6, 5),
+                (4, 8, 7, 3),
+                (1, 5, 8, 4),
+                (2, 3, 7, 6),
+            )
+        )
+        opening_face_set = ifc_file.createIfcPolygonalFaceSet(
+            opening_points, True, opening_faces, None
+        )
+        opening_representation = ifc_file.createIfcShapeRepresentation(
+            context, "Body", "Tessellation", (opening_face_set,)
+        )
+        opening = ifc_file.createIfcOpeningElement(
+            ifcopenshell.guid.new(),
+            None,
+            "Opening",
+            None,
+            None,
+            ifc_file.createIfcLocalPlacement(placement, axis),
+            ifc_file.createIfcProductDefinitionShape(
+                None, None, (opening_representation,)
+            ),
+            None,
+            None,
+        )
+        ifc_file.createIfcRelVoidsElement(
+            ifcopenshell.guid.new(), None, None, None, wall, opening
+        )
+
+        settings = ifcopenshell.geom.settings()
+        settings.set("apply-default-materials", False)
+        shape = ifcopenshell.geom.create_shape(
+            settings,
+            wall,
+            geometry_library="hybrid-cgal-simple-opencascade-cgal",
+        ).geometry
+        material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
+
+        assert len(ifcopenshell.util.shape.get_faces(shape)) == 54
+        assert set(material_ids) == {0, 1, 2}
+
+    def test_indexed_colours_follow_triangulated_faces(self):
+        ifc_file = ifcopenshell.file(schema="IFC4")
+        project = ifc_file.createIfcProject(
+            ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None
+        )
+        origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
+        axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
+        context = ifc_file.createIfcGeometricRepresentationContext(
+            None, "Model", 3, 1e-5, axis, None
+        )
+        project.RepresentationContexts = [context]
+
+        points = ifc_file.createIfcCartesianPointList3D(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (1.0, 1.0, 0.0),
+            )
+        )
+        face_set = ifc_file.createIfcTriangulatedFaceSet(
+            points, None, False, ((1, 2, 3), (2, 4, 3)), None
+        )
+        colours = ifc_file.createIfcColourRgbList(
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        )
+        ifc_file.createIfcIndexedColourMap(face_set, 0.6, colours, (1, 2))
+        representation = ifc_file.createIfcShapeRepresentation(
+            context, "Body", "Tessellation", (face_set,)
+        )
+
+        settings = ifcopenshell.geom.settings()
+        settings.set("apply-default-materials", False)
+        shape = ifcopenshell.geom.create_shape(settings, representation)
+
+        material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
+        materials = ifcopenshell.util.shape.get_material_colors(shape)
+        face_colours = [
+            tuple(round(float(channel), 6) for channel in materials[index])
+            for index in material_ids
+        ]
+
+        assert face_colours == [(1.0, 0.0, 0.0, 0.6), (0.0, 1.0, 0.0, 0.6)]
+
+    def test_indexed_colours_do_not_change_polygonal_face_set_geometry(self):
+        def create_shape(with_colours):
+            ifc_file = ifcopenshell.file(schema="IFC4")
+            project = ifc_file.createIfcProject(
+                ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None
+            )
+            origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
+            axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
+            context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
+            project.RepresentationContexts = [context]
+
+            profile = (
+                (10.595, 0.0),
+                (10.595, 2.135),
+                (9.585, 2.135),
+                (9.585, 0.0),
+                (0.35, 0.0),
+                (0.35, 2.96),
+                (13.825, 2.96),
+                (13.825, 0.0),
+            )
+            points = ifc_file.createIfcCartesianPointList3D(
+                tuple((x, y, z) for y in (0.2, 0.0) for x, z in profile)
+            )
+            face_indices = (
+                (1, 2, 3, 4, 5, 6, 7, 8),
+                (2, 1, 9, 10),
+                (3, 2, 10, 11),
+                (4, 3, 11, 12),
+                (4, 12, 13, 5),
+                (14, 6, 5, 13),
+                (7, 6, 14, 15),
+                (7, 15, 16, 8),
+                (9, 1, 8, 16),
+                (10, 9, 16, 15, 14, 13, 12, 11),
+            )
+            faces = [ifc_file.createIfcIndexedPolygonalFace(indices) for indices in face_indices]
+            face_set = ifc_file.createIfcPolygonalFaceSet(points, True, faces, None)
+            if with_colours:
+                colours = ifc_file.createIfcColourRgbList(
+                    ((0.635294, 0.772549, 0.843137), (0.592157, 0.584314, 0.572549))
+                )
+                ifc_file.createIfcIndexedColourMap(
+                    face_set,
+                    1.0,
+                    colours,
+                    (1, 2, 2, 2, 1, 1, 1, 1, 1, 1),
+                )
+            representation = ifc_file.createIfcShapeRepresentation(
+                context, "Body", "Tessellation", (face_set,)
+            )
+            settings = ifcopenshell.geom.settings()
+            settings.set("apply-default-materials", False)
+            return ifcopenshell.geom.create_shape(settings, representation)
+
+        def triangle_coordinates(shape):
+            vertices = ifcopenshell.util.shape.get_vertices(shape)
+            return sorted(
+                tuple(
+                    sorted(
+                        tuple(round(float(channel), 9) for channel in vertices[vertex_index])
+                        for vertex_index in face
+                    )
+                )
+                for face in ifcopenshell.util.shape.get_faces(shape)
+            )
+
+        uncoloured = create_shape(False)
+        coloured = create_shape(True)
+
+        assert len(ifcopenshell.util.shape.get_faces(uncoloured)) == 28
+        assert len(ifcopenshell.util.shape.get_faces(coloured)) == 28
+        assert triangle_coordinates(coloured) == triangle_coordinates(uncoloured)
+        assert set(ifcopenshell.util.shape.get_faces_material_style_ids(coloured)) == {0, 1}
+
     def test_curve_representation_item_ids(self):
         ifc_file = ifcopenshell.file()
         ifcopenshell.api.root.create_entity(ifc_file, ifc_class="IfcProject", name="Test")

@@ -18,6 +18,7 @@
  ********************************************************************************/
 
 #include "mapping.h"
+#include "IfcTessellatedFaceSetColours.h"
 #define mapping POSTFIX_SCHEMA(mapping)
 using namespace ifcopenshell::geom;
 
@@ -27,6 +28,8 @@ taxonomy::ptr mapping::map_impl(const IfcSchema::IfcPolygonalFaceSet& inst) {
 	auto point_list = inst.Coordinates();
 	auto coordinates = point_list.CoordList();
 	auto polygonal_faces = inst.Faces();
+
+	auto indexed_colours = map_indexed_colours(inst, polygonal_faces.size(), logger_);
 
 	std::vector<taxonomy::point3::ptr> points;
 	points.reserve(coordinates.size());
@@ -58,8 +61,13 @@ taxonomy::ptr mapping::map_impl(const IfcSchema::IfcPolygonalFaceSet& inst) {
 
 	auto shell = taxonomy::make<taxonomy::shell>();
 
+	size_t face_index = 0;
 	for (auto& f : polygonal_faces) {
+		int colour_index = indexed_colours.face_style_indices[face_index++];
 		auto fa = taxonomy::make<taxonomy::face>();
+		if (colour_index >= 0) {
+			fa->surface_style = indexed_colours.styles[colour_index];
+		}
 		shell->children.push_back(fa);
 
 		{

@@ -508,6 +508,21 @@ namespace ifcopenshell::geom {
 		virtual std::string_view backend_id() const = 0;
 #endif
 		virtual void triangulate(ifcopenshell::geom::settings settings, const ifcopenshell::geom::taxonomy::matrix4& place, triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger& logger = ifcopenshell::logger::root()) const = 0;
+		virtual void triangulate(
+			ifcopenshell::geom::settings settings,
+			const ifcopenshell::geom::taxonomy::matrix4& place,
+			triangulation* t,
+			int item_id,
+			int surface_style_id,
+			const std::vector<int>&,
+			ifcopenshell::logger& logger = ifcopenshell::logger::root()) const
+		{
+			triangulate(settings, place, t, item_id, surface_style_id, logger);
+		}
+		virtual const std::vector<ifcopenshell::geom::taxonomy::style::ptr>& face_styles() const {
+			static const std::vector<ifcopenshell::geom::taxonomy::style::ptr> empty;
+			return empty;
+		}
 		ifcopenshell::geom::triangulation* triangulate(const ifcopenshell::geom::settings& settings, ifcopenshell::logger& logger = ifcopenshell::logger::root()) const;
 		virtual void serialize(const ifcopenshell::geom::taxonomy::matrix4& place, std::string&) const = 0;
 

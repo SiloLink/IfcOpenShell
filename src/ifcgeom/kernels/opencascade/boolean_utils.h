@@ -38,6 +38,8 @@
 #include "../../../ifcparse/logger.h"
 #include "../ifc_geomlibrary_api.h"
 
+#include <vector>
+
 namespace ifcopenshell::geom {
 	namespace util {
 
@@ -102,9 +104,23 @@ namespace ifcopenshell::geom {
 			ifcopenshell::logger& log() const { return logger ? *logger : ifcopenshell::logger::root(); }
 		};
 
-		IFC_GEOMLIBRARY_API bool boolean_operation(const boolean_settings& settings, const TopoDS_Shape&, const NCollection_List<TopoDS_Shape>&, BOPAlgo_Operation, TopoDS_Shape&, double fuzziness = -1.);
+		IFC_GEOMLIBRARY_API bool boolean_operation(
+			const boolean_settings& settings,
+			const TopoDS_Shape&,
+			const NCollection_List<TopoDS_Shape>&,
+			BOPAlgo_Operation,
+			TopoDS_Shape&,
+			double fuzziness = -1.,
+			std::vector<int>* first_operand_face_sources = nullptr);
 
-		IFC_GEOMLIBRARY_API bool boolean_operation(const boolean_settings& settings, const TopoDS_Shape&, const TopoDS_Shape&, BOPAlgo_Operation, TopoDS_Shape&, double fuzziness = -1.);
+		IFC_GEOMLIBRARY_API bool boolean_operation(
+			const boolean_settings& settings,
+			const TopoDS_Shape&,
+			const TopoDS_Shape&,
+			BOPAlgo_Operation,
+			TopoDS_Shape&,
+			double fuzziness = -1.,
+			std::vector<int>* first_operand_face_sources = nullptr);
 
 		IFC_GEOMLIBRARY_API TopoDS_Shape ensure_fit_for_subtraction(const TopoDS_Shape& shape, double tol);
 	}
