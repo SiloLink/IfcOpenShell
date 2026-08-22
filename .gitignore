@@ -4,6 +4,10 @@
 /_deps-vs*-x*-installed/
 /_installed-vs*-x*/
 /build/
+/build_py311_official/
+/wheel_build_py311/
+/wheel_temp_py311/
+/wheels/
 /src/examples/build/
 # ifctester docs output
 /src/ifctester/test/build/

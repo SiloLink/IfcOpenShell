@@ -64,7 +64,7 @@ docker run --rm --platform linux/amd64 \
   -e UPSTREAM_CACHE_REPO="$UPSTREAM_CACHE_REPO" \
   -e UPSTREAM_CACHE_REF="$UPSTREAM_CACHE_REF" \
   -e ADD_COMMIT_SHA="$ADD_COMMIT_SHA" \
-  -v "$REPO_ROOT:/workspace" \
+  -v "$REPO_ROOT:/workspace:Z" \
   -w /workspace \
   "$IMAGE" bash -lc '
     set -euo pipefail
@@ -323,6 +323,7 @@ with zipfile.ZipFile(wheel) as zf:
     wheel_data = zf.read(wheel_name)
     digest, size = record_digest(wheel_data)
     assert f"{wheel_name},{digest},{size}" in record_text, record_text
+os.chmod(wheel, 0o644)
 print(wheel)
 PY
 
