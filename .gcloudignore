@@ -1,0 +1,15 @@
+.git
+build_fast/
+build_ifcviewer2/
+build_macos_py313/
+build_py311_amd64/
+build_py311_official/
+wheel_build/
+wheel_build_py311/
+wheel_temp/
+wheel_temp_py311/
+wheelhouse_macos_py313/
+wheels/
+docker_build.log
+__pycache__/
+*.pyc

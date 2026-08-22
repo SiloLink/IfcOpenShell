@@ -1,0 +1,27 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - silolink/docker/Dockerfile.py311-build
+      - -t
+      - ifcopenshell-build-py311-amd64-cloud
+      - silolink/docker
+
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -lc
+      - IMAGE=ifcopenshell-build-py311-amd64-cloud BUILD_JOBS=8 USE_UPSTREAM_CACHE=1 ./silolink/scripts/build_py311_amd64_wheel.sh
+
+artifacts:
+  objects:
+    location: gs://silolink-dev-project_cloudbuild/ifcopenshell-wheels/${BUILD_ID}/
+    paths:
+      - wheels/*.whl
+
+options:
+  machineType: E2_HIGHCPU_32
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 21600s

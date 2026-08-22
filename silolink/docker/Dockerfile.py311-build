@@ -1,0 +1,49 @@
+FROM rockylinux:9
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN dnf update -y \
+    && dnf install -y \
+        autoconf \
+        automake \
+        bison \
+        bzip2 \
+        bzip2-devel \
+        cmake \
+        diffutils \
+        findutils \
+        fontconfig-devel \
+        gcc \
+        gcc-c++ \
+        git \
+        git-lfs \
+        gzip \
+        libffi-devel \
+        libuuid-devel \
+        make \
+        mesa-libGL-devel \
+        ncurses-devel \
+        openssl-devel \
+        patch \
+        python3 \
+        python3-pip \
+        python3.11 \
+        python3.11-pip \
+        readline-devel \
+        sqlite-devel \
+        tar \
+        unzip \
+        wget \
+        which \
+        xz \
+        xz-devel \
+        zip \
+        zlib-devel \
+        byacc \
+    && python3.11 -m pip install --upgrade pip build wheel packaging typing_extensions \
+    && git lfs install --system \
+    && git config --global --add safe.directory '*' \
+    && dnf clean all
+
+WORKDIR /workspace
