@@ -697,6 +697,34 @@ def test_iterator_native_output_is_retrieved_with_get(num_threads):
     assert element.id == element_id
 
 
+@pytest.mark.parametrize("num_threads", [1, 2])
+@pytest.mark.parametrize("geometry_library", ["opencascade", "hybrid-cgal-simple-opencascade-cgal"])
+def test_iterator_skips_duplicate_cartesian_trims(num_threads, geometry_library):
+    ifc_file = ifcopenshell.open(os.path.join(os.path.dirname(__file__), "fixtures/geom/duplicate-cartesian-trims.ifc"))
+    product = ifc_file.by_type("IfcBuildingElementProxy")[0]
+    block = ifc_file.by_type("IfcBlock")[0]
+    logger = ifcopenshell.logger()
+    logger.output_format(logger.FMT_INMEMORY)
+    iterator = ifcopenshell.geom.iterator(
+        ifcopenshell.geom.settings(),
+        ifc_file,
+        num_threads=num_threads,
+        include=[product],
+        geometry_library=geometry_library,
+        logger=logger,
+    )
+
+    assert iterator.initialize()
+    shape = iterator.get()
+    assert shape.guid == product.GlobalId
+    # The invalid revolution must not prevent its valid sibling block from being converted.
+    assert len(shape.geometry.verts) == 8 * 3
+    assert len(shape.geometry.faces) == 12 * 3
+    assert set(shape.geometry.item_ids) == {block.id()}
+    assert not iterator.next()
+    assert [message.code for message in logger].count("GEO295") == 1
+
+
 def test_logging():
     assert ifcopenshell.logger
     logger = ifcopenshell.logger()
