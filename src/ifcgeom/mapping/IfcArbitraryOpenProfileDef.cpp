@@ -25,6 +25,9 @@ using namespace ifcopenshell::geom;
 
 taxonomy::ptr mapping::map_impl(const IfcSchema::IfcArbitraryOpenProfileDef& inst) {
 	auto mapped = map(inst.Curve());
+	if (!mapped) {
+		return nullptr;
+	}
     if (mapped->kind() == taxonomy::LOOP) {
         auto r = taxonomy::loop::ptr((taxonomy::loop*)mapped->clone_());
         r->closed = false;
