@@ -765,13 +765,36 @@ taxonomy::ptr mapping::map(const express::base& inst) {
     }
     taxonomy::ptr item = nullptr;
 
-    // @todo we should check whether there is a notice performance impact on the large sequence
-    // of if-statements and whether a switch on e.g inst.declaration()->index_in_schema()
-    // isn't more efficient (which would disable inheritance though).
-
     bool matched = false;
 
-#include "bind_convert_impl.i"
+    using mapping_function = void (mapping::*)(bool&, taxonomy::ptr&, const express::base&);
+    static const auto dispatch = []() {
+        const auto& declarations = IfcSchema::get_schema().declarations();
+        std::vector<std::vector<mapping_function>> result(declarations.size());
+        for (const auto* declaration : declarations) {
+            auto& handlers = result.at(declaration->index_in_schema());
+            // Keep registration order and compatible base handlers when an earlier
+            // mapping returns null or throws.
+#undef BIND
+#define BIND(T)                                                      \
+    if (declaration->is(IfcSchema::T::Class())) {                    \
+        handlers.push_back(&mapping::process_mapping<IfcSchema::T>); \
+    }
+#include "mapping.i"
+#undef BIND
+        }
+        return result;
+    }();
+
+    const auto& declaration = inst.declaration();
+    if (declaration.schema() == &IfcSchema::get_schema()) {
+        for (auto handler : dispatch.at(declaration.index_in_schema())) {
+            (this->*handler)(matched, item, inst);
+            if (item) {
+                break;
+            }
+        }
+    }
 
     if (item) {
         if (use_caching_) {
@@ -1518,7 +1541,7 @@ void mapping::ensureRepresentationContextCache_() {
 
     std::lock_guard<std::mutex> guard(representation_context_cache_guard_);
 
-    if (representation_context_cache_valid_ &&
+    if (use_caching_ && representation_context_cache_valid_ &&
         representation_context_cache_has_context_ids_ == has_context_ids &&
         representation_context_cache_has_context_priorities_ == has_context_priorities &&
         representation_context_cache_dimensionality_ == dimensionality &&
@@ -1556,7 +1579,7 @@ void mapping::ensureRepresentationContextCache_() {
     representation_context_cache_dimensionality_ = dimensionality;
     representation_context_cache_has_context_ids_ = has_context_ids;
     representation_context_cache_has_context_priorities_ = has_context_priorities;
-    representation_context_cache_valid_ = true;
+    representation_context_cache_valid_ = use_caching_;
 }
 
 express::base mapping::representation_of(const express::base& product) {

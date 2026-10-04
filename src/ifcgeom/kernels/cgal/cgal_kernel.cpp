@@ -916,7 +916,7 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 	std::list<std::pair<express::base, std::list<cgal_polyhedron>>> operands;
 
 	std::list<express::base> second_operand_instances;
-	std::list<cgal_polyhedron> first_operands, second_operands;
+	std::list<cgal_polyhedron> first_operands;
 	std::list<CGAL::Nef_polyhedron_3<kernel_>> first_operands_nef, second_operands_nef;
 
 	for (auto& shp : entity_shapes) {
@@ -939,8 +939,6 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 
 		first_operands_nef.push_back(a);
 	}
-
-	std::list<kernel_::Plane_3> all_operand_planes;
 
 	for (auto& op : openings) {
 		auto opening_trsf = op.second;
@@ -968,22 +966,18 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 				continue;
 			}
 
-			// auto tree = build_halfspace_tree_decomposed(nef, all_operand_planes);
-
 			second_operand_instances.push_back(op.first->instance);
-			second_operands.push_back(entity_shape);
 			second_operands_nef.push_back(nef);
 		}
 	}
 
 	auto iit = second_operand_instances.begin();
-	auto pit = second_operands.begin();
 	for (auto& nef : second_operands_nef) {
 		auto& inst = *iit++;
-		auto& entity_shape = *pit++;
-		if (!preprocess_boolean_operand(inst, first_operands, first_operands_nef, all_operand_planes, entity_shape, nef, PP_MINKOWSKY_DILATE/*PP_SNAP_PLANES_TO_FIRST_OPERAND*/)) {
+		if (!dilate_boolean_operand(inst, nef)) {
 			continue;
 		}
+		check_nef_conversion(inst, nef);
 		second_operand_collector.add_polyhedron(nef);
 		second_operand_collector_size++;
 	}
@@ -1369,6 +1363,30 @@ bool cgal_kernel::thin_solid(const CGAL::Nef_polyhedron_3<kernel_>& a, CGAL::Nef
 	return true;
 }
 
+bool cgal_kernel::dilate_boolean_operand(const express::base& log_reference, CGAL::Nef_polyhedron_3<kernel_>& result) {
+	auto precision_cube_ = precision_cube();
+	try {
+		// @todo don't dilate in 3 dimensions but only in the XY plane, orthogonal to wall axis.
+		result = CGAL::minkowski_sum_3(result, precision_cube_);
+	} catch (CGAL::Failure_exception& e) {
+		logger().notice("GEO", 97, e);
+		logger().message(ifcopenshell::logger::LOG_ERROR, "GEO", 98, "Could not dilate boolean operand", log_reference);
+		return false;
+	}
+
+	return true;
+}
+
+void cgal_kernel::check_nef_conversion(const express::base& log_reference, CGAL::Nef_polyhedron_3<kernel_>& result) {
+	try {
+		cgal_polyhedron convert_back;
+		result.convert_to_polyhedron(convert_back);
+	} catch (CGAL::Failure_exception& e) {
+		logger().notice("GEO", 99, e);
+		logger().message(ifcopenshell::logger::LOG_WARNING, "GEO", 100, "Final conversion will likely fail. Could not convert geometry from Nef:", log_reference);
+	}
+}
+
 bool cgal_kernel::preprocess_boolean_operand(const express::base& log_reference, const std::list<cgal_polyhedron>& first_operands, const std::list<CGAL::Nef_polyhedron_3<kernel_>>& first_operands_nef, const std::list<kernel_::Plane_3>& all_operand_planes, const cgal_polyhedron& shape_const, CGAL::Nef_polyhedron_3<kernel_>& result, boolean_operand_preprocess proc) {
 	cgal_polyhedron shape = shape_const;
 
@@ -1539,16 +1557,8 @@ bool cgal_kernel::preprocess_boolean_operand(const express::base& log_reference,
 		result = mapped->evaluate();
 	}
 
-	if (proc == PP_MINKOWSKY_DILATE) {
-		auto precision_cube_ = precision_cube();
-		try {
-			// @todo don't dilate in 3 dimensions but only in the XY plane, orthogonal to wall axis.
-			result = CGAL::minkowski_sum_3(result, precision_cube_);
-		} catch (CGAL::Failure_exception& e) {
-            logger().notice("GEO", 97, e);
-            logger().message(ifcopenshell::logger::LOG_ERROR, "GEO", 98, "Could not dilate boolean operand", log_reference);
-			return false;
-		}
+	if (proc == PP_MINKOWSKY_DILATE && !dilate_boolean_operand(log_reference, result)) {
+		return false;
 	}
 
 
@@ -1567,13 +1577,7 @@ bool cgal_kernel::preprocess_boolean_operand(const express::base& log_reference,
 	}
 	*/
 
-	try {
-		cgal_polyhedron convert_back;
-		result.convert_to_polyhedron(convert_back);
-	} catch (CGAL::Failure_exception& e) {
-        logger().notice("GEO", 99, e);
-        logger().message(ifcopenshell::logger::LOG_WARNING, "GEO", 100, "Final conversion will likely fail. Could not convert geometry from Nef:", log_reference);
-	}
+	check_nef_conversion(log_reference, result);
 
 	return true;
 }

@@ -39,7 +39,15 @@ namespace {
 std::string get_time(bool with_milliseconds = false) {
     std::ostringstream oss;
     time_t now = time(nullptr);
-    oss << std::put_time(localtime(&now), "%F %T");
+    std::tm local_time{};
+#ifdef _WIN32
+    if (localtime_s(&local_time, &now) != 0) {
+#else
+    if (localtime_r(&now, &local_time) == nullptr) {
+#endif
+        return {};
+    }
+    oss << std::put_time(&local_time, "%F %T");
 
     if (with_milliseconds) {
         auto now_chrono = std::chrono::system_clock::now();

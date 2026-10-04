@@ -62,3 +62,10 @@ endif()
 install(FILES ${SCHEMA_AGNOSTIC_H_FILES}
     DESTINATION ${INCLUDEDIR}/ifcgeom
 )
+
+if(WITH_OPENCASCADE AND NOT WASM_BUILD)
+    add_executable(ifcgeom_contract_tests EXCLUDE_FROM_ALL tests/geometry_contract_tests.cpp)
+    target_link_libraries(ifcgeom_contract_tests PRIVATE
+        IfcGeom geometry_kernel_opencascade ${OpenCASCADE_LIBRARIES} ${CMAKE_DL_LIBS})
+    add_dependencies(ifcgeom_contract_tests ${schema_libraries} ${mapping_libraries})
+endif()

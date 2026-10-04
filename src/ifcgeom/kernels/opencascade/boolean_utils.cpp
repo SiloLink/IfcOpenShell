@@ -30,6 +30,7 @@
 
 #include <vector>
 #include <thread>
+#include <optional>
 
 namespace {
 	bool map_first_operand_face_sources(
@@ -512,6 +513,16 @@ int ifcopenshell::geom::util::eliminate_touching_operands(double prec, const Top
 
 	int N = 0;
 
+	struct face_projection {
+		gp_Pnt point;
+		gp_Vec normal;
+		bool ready = false;
+		bool all_vertices_behind = true;
+	};
+	// Operands are only read inside this call. Reuse the same face evaluation
+	// across candidate pairs without retaining data across booleans or retries.
+	std::vector<face_projection> a_projections(a_faces.Extent() + 1);
+
 	NCollection_List<TopoDS_Shape>::Iterator it(bs);
 	for (; it.More(); it.Next()) {
 		bool is_touching = false;
@@ -543,44 +554,57 @@ int ifcopenshell::geom::util::eliminate_touching_operands(double prec, const Top
 			const TopoDS_Face& f_b = TopoDS::Face(b_faces(k));
 			Bnd_Box B;
 			BRepBndLib::Add(f_b, B);
+			face_projection b_projection;
 
 			// Query tree using b_face bounding box
 			for (auto& i : tree.select_box(B, false)) {
 				const TopoDS_Face& f_a = TopoDS::Face(a_faces(i));
+				auto& a_projection = a_projections[i];
 
 				NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> f_a_vertices;
-				TopExp::MapShapes(f_a, TopAbs_VERTEX, f_a_vertices);
-
-				BRepGProp_Face prop_a(f_a);
-				BRepGProp_Face prop_b(f_b);
-
-				gp_Pnt p_a, p_b;
-				gp_Vec v_a, v_b;
+				std::optional<BRepGProp_Face> prop_a, prop_b;
+				if (!a_projection.ready) {
+					TopExp::MapShapes(f_a, TopAbs_VERTEX, f_a_vertices);
+					prop_a.emplace(f_a);
+				}
+				if (!b_projection.ready) {
+					prop_b.emplace(f_b);
+				}
 
 				double u0, u1, v0, v1;
-				prop_a.Bounds(u0, u1, v0, v1);
-				prop_a.Normal((u0 + u1) / 2., (v0 + v1) / 2., p_a, v_a);
+				if (prop_a) {
+					prop_a->Bounds(u0, u1, v0, v1);
+					prop_a->Normal((u0 + u1) / 2., (v0 + v1) / 2., a_projection.point, a_projection.normal);
+				}
+				if (prop_b) {
+					prop_b->Bounds(u0, u1, v0, v1);
+					prop_b->Normal((u0 + u1) / 2., (v0 + v1) / 2., b_projection.point, b_projection.normal);
+					b_projection.ready = true;
+				}
 
-				prop_b.Bounds(u0, u1, v0, v1);
-				prop_b.Normal((u0 + u1) / 2., (v0 + v1) / 2., p_b, v_b);
-
-				bool all_vertices_behind_f_a = true;
+				const auto& p_a = a_projection.point;
+				const auto& v_a = a_projection.normal;
+				const auto& p_b = b_projection.point;
+				const auto& v_b = b_projection.normal;
 
 				// Check if all 'other' vertices in a are pointing
 				// away from the face in a, so that there is no geometry
 				// from a in front of the face that could participate
 				// in the boolean subtraction.
-				for (int j = 1; j <= a_vertices.Extent(); ++j) {
-					if (!f_a_vertices.Contains(a_vertices(j))) {
-						auto p = BRep_Tool::Pnt(TopoDS::Vertex(a_vertices(j)));
-						if ((p.XYZ() - p_a.XYZ()).Dot(v_a.XYZ()) > prec) {
-							all_vertices_behind_f_a = false;
-							break;
+				if (!a_projection.ready) {
+					for (int j = 1; j <= a_vertices.Extent(); ++j) {
+						if (!f_a_vertices.Contains(a_vertices(j))) {
+							auto p = BRep_Tool::Pnt(TopoDS::Vertex(a_vertices(j)));
+							if ((p.XYZ() - p_a.XYZ()).Dot(v_a.XYZ()) > prec) {
+								a_projection.all_vertices_behind = false;
+								break;
+							}
 						}
 					}
+					a_projection.ready = true;
 				}
 
-				if (!all_vertices_behind_f_a) {
+				if (!a_projection.all_vertices_behind) {
 					continue;
 				}
 

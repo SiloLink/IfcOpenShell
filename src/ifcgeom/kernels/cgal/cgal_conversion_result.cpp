@@ -458,34 +458,49 @@ void ifcopenshell::geom::cgal_shape::triangulate(ifcopenshell::geom::settings se
 	// std::map<cgal_vertex_descriptor, kernel_::Vector_3> vertex_normals;
 	// boost::associative_property_map<std::map<cgal_vertex_descriptor, kernel_::Vector_3>> vertex_normals_map(vertex_normals);
 
-	// triangulate the shape and compute the normals
+	const bool emit_normals = !settings.get<settings::DontEmitNormals>().get();
+	const bool weld_without_normals = !emit_normals && settings.get<settings::WeldVertices>().get();
+
 	std::map<facet_const_handle, kernel_::Vector_3> face_normals;
 	boost::associative_property_map<std::map<facet_const_handle, kernel_::Vector_3>> face_normals_map(face_normals);
 
-	//  CGAL::Polygon_mesh_processing::compute_normals(s, vertex_normals_map, face_normals_map);
-	try {
-		CGAL::Polygon_mesh_processing::compute_face_normals(*shape_to_use, face_normals_map);
-	} catch (...) {
-		logger.message(ifcopenshell::logger::LOG_ERROR, "GEO", 68, "Face normal calculation failed");
-		return;
+	// Unwelded output still needs normals to preserve its existing vertex splits.
+	if (!weld_without_normals) {
+		try {
+			CGAL::Polygon_mesh_processing::compute_face_normals(*shape_to_use, face_normals_map);
+		} catch (...) {
+			logger.message(ifcopenshell::logger::LOG_ERROR, "GEO", 68, "Face normal calculation failed");
+			return;
+		}
 	}
 
-	// We do welding here in addition to in the triangulation item, because
-	// CGAL does not have a concept of vertices with identity like OCCT has.
+	// Retain position/normal splits unless Triangulation owns welding without normals.
 	typedef std::tuple<kernel_::FT, kernel_::FT, kernel_::FT, kernel_::FT, kernel_::FT, kernel_::FT> postion_normal;
 	std::map<postion_normal, size_t> welds;
+	std::map<polyhedron::Vertex_const_handle, size_t> vertex_indices;
+
+	auto add_vertex = [&](polyhedron::Vertex_const_handle vertex) {
+		return t->addVertex(
+			item_id,
+			surface_style_id,
+			CGAL::to_double(vertex->point().cartesian(0)),
+			CGAL::to_double(vertex->point().cartesian(1)),
+			CGAL::to_double(vertex->point().cartesian(2)));
+	};
 
 	std::set<std::pair<int, int>> registered_edges;
 
 	int num_faces = 0, num_vertices = 0;
 	for (auto &face : faces(*shape_to_use)) {
 		if (!face->is_triangle()) {
-			std::cout << "warning: non-triangular face!" << std::endl;
+			std::cout << "Warning: non-triangular face!" << std::endl;
 			continue;
 		}
 		CGAL::Polyhedron_3<kernel_>::Halfedge_around_facet_const_circulator current_halfedge = face->facet_begin();
 
-		const kernel_::Vector_3 facet_normal = face_normals_map[face];
+		const kernel_::Vector_3 facet_normal = weld_without_normals
+			? kernel_::Vector_3(0, 0, 0)
+			: face_normals_map[face];
 
 		int vertexidx[3];
 		bool is_face_boundary[3];
@@ -493,63 +508,69 @@ void ifcopenshell::geom::cgal_shape::triangulate(ifcopenshell::geom::settings se
 		do {
 			auto v = current_halfedge->vertex();
 
-			auto vertex_norm = facet_normal;
+			size_t vidx;
+			if (weld_without_normals) {
+				auto it = vertex_indices.find(v);
+				if (it == vertex_indices.end()) {
+					vidx = add_vertex(v);
+					vertex_indices.emplace(v, vidx);
+				} else {
+					vidx = it->second;
+				}
+			} else {
+				auto vertex_norm = facet_normal;
 
-			if (smooth_treshold) {
-				kernel_::Vector_3 normal_accum(0, 0, 0);
-				{
-					// circulator around the vertex
-					auto vh_begin = v->vertex_begin();
-					if (vh_begin != nullptr) {
-						auto vh = vh_begin;
-						do {
-							if (!vh->is_border()) {
-								facet_const_handle adj_f = vh->facet();
-								const auto fn2 = face_normals_map[adj_f];
-								if ((fn2 * facet_normal) >= *smooth_treshold) {
-									normal_accum = normal_accum + fn2;
+				if (smooth_treshold) {
+					kernel_::Vector_3 normal_accum(0, 0, 0);
+					{
+						// circulator around the vertex
+						auto vh_begin = v->vertex_begin();
+						if (vh_begin != nullptr) {
+							auto vh = vh_begin;
+							do {
+								if (!vh->is_border()) {
+									facet_const_handle adj_f = vh->facet();
+									const auto fn2 = face_normals_map[adj_f];
+									if ((fn2 * facet_normal) >= *smooth_treshold) {
+										normal_accum = normal_accum + fn2;
+									}
+									++vh;
 								}
-								++vh;
-							}
-						} while (vh != vh_begin);
+							} while (vh != vh_begin);
+						}
+					}
+					const double len = std::sqrt(CGAL::to_double(normal_accum.squared_length()));
+					if (len > 0) {
+						vertex_norm = normal_accum / len;
 					}
 				}
-				const double len = std::sqrt(CGAL::to_double(normal_accum.squared_length()));
-				if (len > 0) {
-					vertex_norm = normal_accum / len;
+
+				postion_normal pn = {
+					v->point().cartesian(0),
+					v->point().cartesian(1),
+					v->point().cartesian(2),
+					vertex_norm.cartesian(0),
+					vertex_norm.cartesian(1),
+					vertex_norm.cartesian(2)
+				};
+
+				// @todo normalzie based on largest component?
+
+				auto it = welds.find(pn);
+				if (it == welds.end()) {
+					vidx = add_vertex(v);
+					welds.insert({ pn, vidx });
+
+					if (emit_normals) {
+						auto nx = CGAL::to_double(face_normals_map[face].cartesian(0));
+						auto ny = CGAL::to_double(face_normals_map[face].cartesian(1));
+						auto nz = CGAL::to_double(face_normals_map[face].cartesian(2));
+
+						t->addNormal(nx, ny, nz);
+					}
+				} else {
+					vidx = it->second;
 				}
-			}
-
-			postion_normal pn = {
-				v->point().cartesian(0),
-				v->point().cartesian(1),
-				v->point().cartesian(2),
-				vertex_norm.cartesian(0),
-				vertex_norm.cartesian(1),
-				vertex_norm.cartesian(2)
-			};
-
-			// @todo normalzie based on largest component?
-
-			size_t vidx;
-			auto it = welds.find(pn);
-			if (it == welds.end()) {
-				vidx = t->addVertex(
-					item_id,
-					surface_style_id,
-					CGAL::to_double(current_halfedge->vertex()->point().cartesian(0)),
-					CGAL::to_double(current_halfedge->vertex()->point().cartesian(1)),
-					CGAL::to_double(current_halfedge->vertex()->point().cartesian(2))
-				);
-				welds.insert({ pn, vidx });
-
-				auto nx = CGAL::to_double(face_normals_map[face].cartesian(0));
-				auto ny = CGAL::to_double(face_normals_map[face].cartesian(1));
-				auto nz = CGAL::to_double(face_normals_map[face].cartesian(2));
-
-				t->addNormal(nx, ny, nz);
-			} else {
-				vidx = it->second;
 			}
 
 			vertexidx[i] = (int)vidx;
