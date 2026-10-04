@@ -160,19 +160,17 @@ void ifcopenshell::geom::open_cascade_shape::triangulate(
 			// Manifold edges (i.e. edges used twice) are deemed invisible
 			std::map<std::pair<int, int>, int> edgecount;
 
-			std::vector<gp_XYZ> coords;
 			BRepGProp_Face prop(face);
-			std::map<int, int> dict;
+			std::vector<int> node_indices(tri->NbNodes() + 1);
 
 			// Vertex normals are only calculated if vertices are not welded and calculation is not disable explicitly.
 			const bool calculate_normals = !settings.get<settings::WeldVertices>().get() &&
 				!settings.get<settings::DontEmitNormals>().get();
 
 			for (int i = 1; i <= tri->NbNodes(); ++i) {
-				coords.push_back(tri->Node(i).Transformed(loc).XYZ());
-				taxonomy_transform(place.components_, *coords.rbegin());
-				const gp_XYZ& last = *coords.rbegin();
-				dict[i] = t->addVertex(item_id, face_style_id, last.X(), last.Y(), last.Z());
+				auto point = tri->Node(i).Transformed(loc).XYZ();
+				taxonomy_transform(place.components_, point);
+				node_indices[i] = t->addVertex(item_id, face_style_id, point.X(), point.Y(), point.Z());
 
 				if (calculate_normals) {
 					const gp_Pnt2d& uv = tri->UVNode(i);
@@ -214,38 +212,27 @@ void ifcopenshell::geom::open_cascade_shape::triangulate(
 					triangles(i).Get(n3, n2, n1);
 				else triangles(i).Get(n1, n2, n3);
 
-				if (dict[n1] == dict[n2] || dict[n2] == dict[n3] || dict[n3] == dict[n1]) {
+				const int v1 = node_indices[n1];
+				const int v2 = node_indices[n2];
+				const int v3 = node_indices[n3];
+				if (v1 == v2 || v2 == v3 || v3 == v1) {
 					logger.warning("GEO", 185, "Mesher generated a degenerate triangle, ignoring");
 					continue;
 				}
 
-				/* An alternative would be to calculate normals based
-				* on the coordinates of the mesh vertices */
-				/*
-				const gp_XYZ pt1 = coords[n1-1];
-				const gp_XYZ pt2 = coords[n2-1];
-				const gp_XYZ pt3 = coords[n3-1];
-				const gp_XYZ v1 = pt2-pt1;
-				const gp_XYZ v2 = pt3-pt2;
-				gp_Dir normal = gp_Dir(v1^v2);
-				_normals.push_back((float)normal.X());
-				_normals.push_back((float)normal.Y());
-				_normals.push_back((float)normal.Z());
-				*/
-
 				if (polyhedral_output_without_holes || polyhedral_output_with_holes) {
-					triangle_indices.push_back({ dict[n1], dict[n2], dict[n3] });
+					triangle_indices.push_back({ v1, v2, v3 });
 				} else {
 					if (settings.get<settings::TriangulationType>().get() == settings::POLYHEDRON_WITHOUT_HOLES) {
-						t->addFace(item_id, face_style_id, std::vector<int>{ dict[n1], dict[n2], dict[n3] });
+						t->addFace(item_id, face_style_id, std::vector<int>{ v1, v2, v3 });
 					} else if (settings.get<settings::TriangulationType>().get() == settings::POLYHEDRON_WITH_HOLES) {
-						t->addFace(item_id, face_style_id, std::vector<std::vector<int>>{{ dict[n1], dict[n2], dict[n3] }});
+						t->addFace(item_id, face_style_id, std::vector<std::vector<int>>{{ v1, v2, v3 }});
 					} else {
-						t->addFace(item_id, face_style_id, dict[n1], dict[n2], dict[n3]);
+						t->addFace(item_id, face_style_id, v1, v2, v3);
 
-						t->registerEdgeCount(dict[n1], dict[n2], edgecount);
-						t->registerEdgeCount(dict[n2], dict[n3], edgecount);
-						t->registerEdgeCount(dict[n3], dict[n1], edgecount);
+						t->registerEdgeCount(v1, v2, edgecount);
+						t->registerEdgeCount(v2, v3, edgecount);
+						t->registerEdgeCount(v3, v1, edgecount);
 					}
 				}
 			}

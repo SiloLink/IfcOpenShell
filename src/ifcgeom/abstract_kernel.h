@@ -92,6 +92,7 @@ namespace ifcopenshell {
 		ifcopenshell::logger& logger() const { return logger_; }
 
 		virtual bool supports_boolean_operations() const = 0;
+		virtual bool supports_face_styles() const { return false; }
 
 		virtual bool convert_impl(const taxonomy::matrix4::ptr, std::vector<ifcopenshell::geom::conversion_result>&) { throw not_implemented_error(); }
 		virtual bool convert_impl(const taxonomy::point3::ptr, std::vector<ifcopenshell::geom::conversion_result>&) { throw not_implemented_error(); }

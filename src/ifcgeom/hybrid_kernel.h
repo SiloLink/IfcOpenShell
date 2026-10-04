@@ -155,12 +155,18 @@ namespace ifcopenshell {
 					}
 					return false;
 				}
+				bool supports_face_styles() const override {
+					return std::any_of(kernels_.begin(), kernels_.end(), [](const auto& k) { return k->supports_face_styles(); });
+				}
 				virtual bool convert(const taxonomy::ptr item, std::vector<ifcopenshell::geom::conversion_result>& rs)
 				{
 					auto ops = mapping_->find_openings(item->instance);
 					auto face_styles = required_face_styles(item);
 					bool has_openings = ops.size();
 					for (auto& k : kernels_) {
+						if (!face_styles.empty() && !k->supports_face_styles()) {
+							continue;
+						}
 #ifdef IFOPSH_WITH_CGAL
 						if (has_openings && !k->supports_boolean_operations()) {
 							// @todo this would fail later on in the find_openings() call, because we have a

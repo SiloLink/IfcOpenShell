@@ -121,6 +121,7 @@ public:
 	}
 
 	virtual bool supports_boolean_operations() const { return true; }
+	bool supports_face_styles() const override { return true; }
 
 	bool convert(const ifcopenshell::geom::taxonomy::extrusion::ptr, TopoDS_Shape&);
 	bool convert(const ifcopenshell::geom::taxonomy::face::ptr, TopoDS_Shape&, bool reversed_surface = false);
