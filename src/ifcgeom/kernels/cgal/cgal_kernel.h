@@ -82,6 +82,8 @@ namespace ifcopenshell {
 					PP_NONE
 				};
 
+				bool dilate_boolean_operand(const express::base& log_reference, CGAL::Nef_polyhedron_3<kernel_>& result);
+				void check_nef_conversion(const express::base& log_reference, CGAL::Nef_polyhedron_3<kernel_>& result);
 				bool preprocess_boolean_operand(const express::base& log_reference, const std::list<cgal_polyhedron>& first_operands, const std::list<CGAL::Nef_polyhedron_3<kernel_>>& first_operands_nef, const std::list<kernel_::Plane_3>& all_operand_planes, const cgal_polyhedron& shape_const, CGAL::Nef_polyhedron_3<kernel_>& result, boolean_operand_preprocess proc);
 
 				bool thin_solid(const CGAL::Nef_polyhedron_3<kernel_>& a, CGAL::Nef_polyhedron_3<kernel_>& result);
