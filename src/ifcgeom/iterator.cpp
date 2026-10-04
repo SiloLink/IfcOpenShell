@@ -152,11 +152,30 @@ bool ifcopenshell::geom::iterator::initialize() {
 		total = (int)tasks_.size();
 
 		if (num_threads_ != 1) {
-			init_future_ = std::async(std::launch::async, [this]() { process_concurrently(); });
+			bool run_synchronously = false;
+			try {
+				init_future_ = std::async(std::launch::async, [this]() { process_concurrently(); });
+			} catch (const std::system_error& e) {
+				logger_.error("GEO", 52, e);
+				had_error_processing_elements_ = true;
+				run_synchronously = true;
+			}
 
 			// wait for the first element, because after init(), get() can be called.
 			// so the element conversion must succeed
-			initialization_outcome_ = wait_for_element();
+			if (!run_synchronously) {
+				initialization_outcome_ = wait_for_element();
+				if (!*initialization_outcome_ && kernel_pool.empty()) {
+					// No clone was available. Use the original converter only after
+					// the coordinator has stopped, on the same thread as get_object().
+					init_future_.wait();
+					run_synchronously = true;
+				}
+			}
+			if (run_synchronously) {
+				num_threads_ = 1;
+				initialization_outcome_ = create();
+			}
 		} else {
 			initialization_outcome_ = create();
 		}
@@ -180,120 +199,136 @@ void ifcopenshell::geom::iterator::process_finished_rep(geometry_conversion_resu
 		return;
 	}
 
-	std::lock_guard<std::mutex> lk(element_ready_mutex_);
+	// Allocate both lists before publishing either one. If allocation fails,
+	// local owners release moved results without exposing an incomplete pair.
+	std::list<std::unique_ptr<element>> elements(
+		std::make_move_iterator(rep->elements.begin()), std::make_move_iterator(rep->elements.end()));
+	std::list<std::unique_ptr<native_element>> native_elements(
+		std::make_move_iterator(rep->native_elements.begin()), std::make_move_iterator(rep->native_elements.end()));
+	{
+		std::lock_guard<std::mutex> lk(element_ready_mutex_);
+		all_processed_elements_.splice(all_processed_elements_.end(), elements);
+		all_processed_native_elements_.splice(all_processed_native_elements_.end(), native_elements);
+		rep->elements.clear();
+		rep->native_elements.clear();
 
-	all_processed_elements_.insert(
-		all_processed_elements_.end(),
-		std::make_move_iterator(rep->elements.begin()),
-		std::make_move_iterator(rep->elements.end()));
-	all_processed_native_elements_.insert(
-		all_processed_native_elements_.end(),
-		std::make_move_iterator(rep->native_elements.begin()),
-		std::make_move_iterator(rep->native_elements.end()));
-	rep->elements.clear();
-	rep->native_elements.clear();
-
-	if (!task_result_ptr_initialized) {
-		task_result_iterator_ = all_processed_elements_.begin();
-		native_task_result_iterator_ = all_processed_native_elements_.begin();
-		task_result_ptr_initialized = true;
+		if (!task_result_ptr_initialized) {
+			task_result_iterator_ = all_processed_elements_.begin();
+			native_task_result_iterator_ = all_processed_native_elements_.begin();
+			task_result_ptr_initialized = true;
+		}
+		progress_ = (int)(++processed_ * 100 / tasks_.size());
 	}
-
-	progress_ = (int)(++processed_ * 100 / tasks_.size());
+	element_ready_.notify_one();
 }
 
 void ifcopenshell::geom::iterator::process_concurrently() {
-	size_t conc_threads = num_threads_;
-	if (conc_threads > tasks_.size()) {
-		conc_threads = tasks_.size();
+	size_t conc_threads = std::min(static_cast<size_t>(num_threads_), tasks_.size());
+	std::atomic<size_t> next_task{0};
+	std::vector<std::future<void>> workers;
+	try {
+		workers.reserve(conc_threads);
+		kernel_pool.reserve(conc_threads);
+		worker_loggers_.reserve(conc_threads);
+		for (unsigned i = 0; i < conc_threads; ++i) {
+			worker_loggers_.emplace_back(std::make_unique<logger>());
+			ifcopenshell::logger& worker_logger = *worker_loggers_.back();
+			worker_logger.verbosity(logger_.verbosity());
+			worker_logger.output_format(logger_.output_format());
+			worker_logger.print_performance_stats_on_element(logger_.print_performance_stats_on_element());
+			if (worker_logger.output_format() != ifcopenshell::logger::FMT_INMEMORY) {
+				worker_logger.set_output(static_cast<std::ostream*>(nullptr), static_cast<std::ostream*>(nullptr));
+			}
+			kernel_pool.push_back(new ifcopenshell::geom::converter(std::unique_ptr<ifcopenshell::geom::kernels::abstract_kernel>(converter_->kernel()->clone(worker_logger)), ifc_file, settings_, worker_logger));
+		}
+	} catch (const std::exception& e) {
+		logger_.error("GEO", 52, e);
+		had_error_processing_elements_ = true;
+	} catch (...) {
+		logger_.error("GEO", 53, "Failed to create geometry kernels");
+		had_error_processing_elements_ = true;
 	}
 
-	kernel_pool.reserve(conc_threads);
-	worker_loggers_.reserve(conc_threads);
-	for (unsigned i = 0; i < conc_threads; ++i) {
-		worker_loggers_.emplace_back(std::make_unique<logger>());
-		ifcopenshell::logger& worker_logger = *worker_loggers_.back();
-		worker_logger.verbosity(logger_.verbosity());
-		worker_logger.output_format(logger_.output_format());
-		worker_logger.print_performance_stats_on_element(logger_.print_performance_stats_on_element());
-		if (worker_logger.output_format() != ifcopenshell::logger::FMT_INMEMORY) {
-			worker_logger.set_output(static_cast<std::ostream*>(nullptr), static_cast<std::ostream*>(nullptr));
-		}
-		kernel_pool.push_back(new ifcopenshell::geom::converter(std::unique_ptr<ifcopenshell::geom::kernels::abstract_kernel>(converter_->kernel()->clone(worker_logger)), ifc_file, settings_, worker_logger));
-	}
-
-	std::vector<std::future<geometry_conversion_result*>> threadpool;
-
-	for (auto& rep : tasks_) {
-		ifcopenshell::geom::converter* K = nullptr;
-		if (threadpool.size() < kernel_pool.size()) {
-			K = kernel_pool[threadpool.size()];
-		}
-
-		while (threadpool.size() == conc_threads) {
-			for (int i = 0; i < (int)threadpool.size(); i++) {
-				auto& fu = threadpool[i];
-				std::future_status status;
-				status = fu.wait_for(std::chrono::seconds(0));
-				if (status == std::future_status::ready) {
-					process_finished_rep(fu.get(), kernel_pool[i]);
-
-					std::swap(threadpool[i], threadpool.back());
-					threadpool.pop_back();
-					std::swap(kernel_pool[i], kernel_pool.back());
-					std::swap(worker_loggers_[i], worker_loggers_.back());
-					K = kernel_pool.back();
+	auto process = [this, &next_task](converter* kernel) {
+		while (!terminating_) {
+			{
+				std::unique_lock<std::mutex> lock(element_ready_mutex_);
+				// Keep a small ready queue in addition to in-flight representation
+				// batches, instead of materializing the model ahead of the caller.
+				output_consumed_.wait(lock, [this]() {
+					return terminating_ || all_processed_elements_.size() - async_elements_returned_ < static_cast<size_t>(num_threads_);
+				});
+				if (terminating_) {
 					break;
-				} // if
-			}   // for
-		}	 // while
-
-		std::future<geometry_conversion_result*> fu = std::async(
-			std::launch::async, [this](
-				ifcopenshell::geom::converter* kernel,
-				ifcopenshell::geom::settings settings,
-				geometry_conversion_result* rep) {
-			// Catch exceptions to be safe from freezing the iterator.
+				}
+			}
+			const auto index = next_task.fetch_add(1);
+			if (index >= tasks_.size()) {
+				break;
+			}
+			auto* rep = &tasks_[index];
 			try {
-				this->create_element_(kernel, settings, rep);
+				create_element_(kernel, settings_, rep);
 			} catch (const std::exception& e) {
 				kernel->logger().error("GEO", 52,
-					std::string("Exception '") + e.what() +
-					std::string("' occurred while iterator was creating a shape: "),
-					rep->item->instance
-				);
+					std::string("Exception '") + e.what() + "' occurred while iterator was creating a shape: ",
+					rep->item ? rep->item->instance : rep->representation);
 				had_error_processing_elements_ = true;
 			} catch (...) {
-				kernel->logger().error("GEO", 53,
-					"Unknown exception occurred while iteartor was creating a shape: ",
-					rep->item->instance
-				);
+				kernel->logger().error("GEO", 53, "Unknown exception occurred while iterator was creating a shape: ",
+					rep->item ? rep->item->instance : rep->representation);
 				had_error_processing_elements_ = true;
 			}
-			return rep;
-		},
-			K,
-			std::ref(settings_),
-			&rep);
-
-		if (terminating_) {
-			break;
+			kernel->logger().set_product(std::optional<express::base>{});
+			process_finished_rep(rep, kernel);
 		}
+	};
 
-		threadpool.emplace_back(std::move(fu));
+	// The coordinator processes one kernel itself, so an available kernel can
+	// drain the queue even when no additional worker thread can be created.
+	try {
+		for (size_t i = 1; i < kernel_pool.size(); ++i) {
+			workers.emplace_back(std::async(std::launch::async, process, kernel_pool[i]));
+		}
+	} catch (const std::exception& e) {
+		logger_.error("GEO", 52, e);
+		had_error_processing_elements_ = true;
+	} catch (...) {
+		logger_.error("GEO", 53, "Failed to start geometry workers");
+		had_error_processing_elements_ = true;
 	}
 
-	for (size_t i = 0; i < threadpool.size(); ++i) {
-		process_finished_rep(threadpool[i].get(), kernel_pool[i]);
+	if (!kernel_pool.empty()) {
+		try {
+			process(kernel_pool.front());
+		} catch (const std::exception& e) {
+			logger_.error("GEO", 52, e);
+			had_error_processing_elements_ = true;
+		} catch (...) {
+			logger_.error("GEO", 53, "Geometry worker failed");
+			had_error_processing_elements_ = true;
+		}
 	}
-
-	finished_ = true;
-
-	logger_.set_product(std::optional<express::base>{});
-
+	for (auto& worker : workers) {
+		try {
+			worker.get();
+		} catch (const std::exception& e) {
+			logger_.error("GEO", 52, e);
+			had_error_processing_elements_ = true;
+		} catch (...) {
+			logger_.error("GEO", 53, "Geometry worker failed");
+			had_error_processing_elements_ = true;
+		}
+	}
+	{
+		std::lock_guard<std::mutex> lock(element_ready_mutex_);
+		finished_ = true;
+	}
+	element_ready_.notify_all();
+	// Worker loggers are cleared above; only the caller updates the primary
+	// logger's product context while it consumes the results.
 	if (!terminating_) {
-		logger_.status("\rDone creating geometry (" + boost::lexical_cast<std::string>(all_processed_elements_.size()) +
-			" objects)								");
+		logger_.status("\rDone creating geometry (" + boost::lexical_cast<std::string>(all_processed_elements_.size()) + " objects)");
 	}
 }
 
@@ -384,6 +419,9 @@ void ifcopenshell::geom::iterator::create_element_(ifcopenshell::geom::converter
 	} else {
 	}
 
+	rep->native_elements.reserve(rep->products.size());
+	rep->elements.reserve(rep->products.size());
+
 	auto product_node = rep->products.front();
 	const express::base product = product_node.first;
 	const auto& place = product_node.second;
@@ -452,6 +490,7 @@ std::unique_ptr<ifcopenshell::geom::element> ifcopenshell::geom::iterator::proce
 			return std::make_unique<ifcopenshell::geom::serialized_element>(*elem);
 		} catch (...) {
 			logger.message(ifcopenshell::logger::LOG_ERROR, "GEO", 54, "Getting a serialized element from model failed.");
+			had_error_processing_elements_ = true;
 			return nullptr;
 		}
 	} else if (settings.get<ifcopenshell::geom::settings::IteratorOutput>().get() == ifcopenshell::geom::settings::TRIANGULATED) {
@@ -463,6 +502,7 @@ std::unique_ptr<ifcopenshell::geom::element> ifcopenshell::geom::iterator::proce
 			}
 		} catch (...) {
 			logger.message(ifcopenshell::logger::LOG_ERROR, "GEO", 55, "Getting a triangulation element from model failed.");
+			had_error_processing_elements_ = true;
 			return nullptr;
 		}
 	} else {
@@ -471,21 +511,17 @@ std::unique_ptr<ifcopenshell::geom::element> ifcopenshell::geom::iterator::proce
 }
 
 bool ifcopenshell::geom::iterator::wait_for_element() {
-	while (true) {
-		size_t s;
-		{
-			std::lock_guard<std::mutex> lk(element_ready_mutex_);
-			s = all_processed_elements_.size();
-		}
-		if (s > async_elements_returned_) {
-			++async_elements_returned_;
-			return true;
-		} else if (finished_) {
-			return false;
-		} else {
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		}
+	std::unique_lock<std::mutex> lock(element_ready_mutex_);
+	element_ready_.wait(lock, [this]() {
+		return all_processed_elements_.size() > async_elements_returned_ || finished_;
+	});
+	if (all_processed_elements_.size() > async_elements_returned_) {
+		++async_elements_returned_;
+		lock.unlock();
+		output_consumed_.notify_all();
+		return true;
 	}
+	return false;
 }
 
 void ifcopenshell::geom::iterator::log_timepoints() const {
@@ -860,7 +896,11 @@ ifcopenshell::geom::taxonomy::direction3::ptr ifcopenshell::geom::iterator::remo
 
 ifcopenshell::geom::iterator::~iterator() {
 	if (num_threads_ != 1) {
-		terminating_ = true;
+		{
+			std::lock_guard<std::mutex> lock(element_ready_mutex_);
+			terminating_ = true;
+		}
+		output_consumed_.notify_all();
 
 		if (init_future_.valid()) {
 			init_future_.wait();

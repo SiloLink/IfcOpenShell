@@ -78,6 +78,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <condition_variable>
 #include <memory>
 
 namespace ifcopenshell::geom {
@@ -125,6 +126,8 @@ namespace ifcopenshell::geom {
 		std::list<std::unique_ptr<ifcopenshell::geom::native_element>>::iterator native_task_result_iterator_;
 
 		std::mutex element_ready_mutex_;
+		std::condition_variable element_ready_;
+		std::condition_variable output_consumed_;
 		bool task_result_ptr_initialized = false;
 		bool task_result_ptr_exhausted = false;
 		size_t async_elements_returned_ = 0;

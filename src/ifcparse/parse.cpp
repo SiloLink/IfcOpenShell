@@ -633,6 +633,12 @@ const ifcopenshell::aggregation_type* nested_aggregation_type(const ifcopenshell
     return aggregate_type ? aggregate_parameter_type(aggregate_type->type_of_element()) : nullptr;
 }
 
+bool is_header_declaration(const ifcopenshell::declaration& declaration) {
+    // Use the declaration's existing schema. Initializing a plugin-local header
+    // schema here races when workers first serialize entities concurrently.
+    return declaration.schema()->name() == "HEADER_SECTION_SCHEMA";
+}
+
 void warn_attribute_count(
     const ifcopenshell::declaration* declaration,
     std::optional<size_t> instance_name,
@@ -643,7 +649,7 @@ void warn_attribute_count(
     if (!declaration || expected_size == actual_size) {
         return;
     }
-    if (declaration->schema() == &Header_section_schema::get_schema()) {
+    if (is_header_declaration(*declaration)) {
         logger.warning("VAL", 15, "Expected " + std::to_string(expected_size) + " attribute values, found " + std::to_string(actual_size) + " for header entity " + declaration->name());
     } else {
         logger.warning("VAL", 16, "Expected " + std::to_string(expected_size) + " attribute values, found " + std::to_string(actual_size) + (instance_name ? std::string(" for instance #" + std::to_string(*instance_name)) : std::string("")));
@@ -1313,7 +1319,7 @@ namespace {
             data_ << "." << i.value() << ".";
         }
         void operator()(const express::base& i) {
-            if (i.declaration().as_entity() == nullptr || i.declaration().schema() == &Header_section_schema::get_schema()) {
+            if (i.declaration().as_entity() == nullptr || is_header_declaration(i.declaration())) {
                 i.to_string(data_, upper_);
             } else {
                 data_ << "#" << i.id();
@@ -3412,7 +3418,7 @@ attribute_value express::base::get_attribute_value(size_t index) const {
 void express::base::to_string(std::ostream& out, bool upper) const
 {
     const auto *ent = declaration().as_entity();
-    if (ent != nullptr && declaration().schema() != &Header_section_schema::get_schema()) {
+    if (ent != nullptr && !is_header_declaration(declaration())) {
         out << "#" << id() << "=";
     }
     if (upper) {

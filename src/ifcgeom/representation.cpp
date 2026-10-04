@@ -48,31 +48,27 @@ ifcopenshell::geom::serialization::serialization(const native& native_geometry)
 	}
 
 	ifcopenshell::geom::taxonomy::matrix4 identity;
-	auto* comp = native_geometry.as_compound();
+	std::unique_ptr<conversion_result_shape> comp(native_geometry.as_compound());
 	comp->serialize(identity, brep_data_);
-	delete comp;
 }
 
 ifcopenshell::geom::conversion_result_shape* ifcopenshell::geom::native::as_compound(bool force_meters) const {
-	conversion_result_shape* accum = nullptr;
+	std::unique_ptr<conversion_result_shape> accum;
 
 	for (auto it = begin(); it != end(); ++it) {
 		double unit_scale = 1.0;
 		if (!force_meters && settings().get<ifcopenshell::geom::settings::ConvertBackUnits>().get()) {
 			unit_scale = 1.0 / settings().get<ifcopenshell::geom::settings::LengthUnit>().get();
 		}
-		auto s = it->apply_transform(unit_scale);
+		std::unique_ptr<conversion_result_shape> s(it->apply_transform(unit_scale));
 		if (accum) {
-			auto n = accum->concat(s);
-			delete s;
-			delete accum;
-			accum = n;
+			accum.reset(accum->concat(s.get()));
 		} else {
-			accum = s->wrap_in_compound();
+			accum.reset(s->wrap_in_compound());
 		}
 	}
 
-	return accum;
+	return accum.release();
 }
 
 bool ifcopenshell::geom::native::calculate_surface_area(double& area) const {
