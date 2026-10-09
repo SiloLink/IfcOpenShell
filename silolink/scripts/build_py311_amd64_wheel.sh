@@ -183,6 +183,19 @@ PY
       mkdir -p "$BUILD_DIR"
     fi
 
+    # CMake installs current files but does not remove obsolete cached plug-ins.
+    python3.11 - <<PY
+import shutil
+from pathlib import Path
+
+python_prefix = Path("$BUILD_DIR/Linux/x86_64/install/python-$PYTHON_VERSION")
+for site in python_prefix.glob("lib*/python*/site-packages"):
+    package = site / "ifcopenshell"
+    if package.exists():
+        print(f"Removing cached IfcOpenShell package: {package}")
+        shutil.rmtree(package)
+PY
+
     echo "Running upstream build-all.py for py311 IfcOpenShell-Python..."
     python3.11 ./nix/build-all.py -v --diskcleanup --occt-shared --schemas "$IFC_SCHEMAS" "$PYTHON_BUILD_FLAG" IfcOpenShell-Python
 
@@ -194,6 +207,7 @@ PY
     fi
     python3.11 - <<PY
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -209,6 +223,11 @@ packaging.package_python_wrapper(
 )
 if packaging.HAS_MISSING_DEPENDENCIES:
     raise SystemExit("Missing native runtime dependencies in the staged Python package")
+staged = install_root / "ifcopenshell" / (".package-python-" + "$PYTHON_TAG"[2:]) / "ifcopenshell"
+for library in staged.glob("ifcopenshell_*.so"):
+    symbols = subprocess.check_output(["nm", "-D", "--defined-only", str(library)], text=True)
+    if "ifcopenshell_plugin_abi_v1" in symbols:
+        raise SystemExit(f"Obsolete ABI v1 plug-in in the staged package: {library}")
 PY
     module_pkg="$deps_dir/install/ifcopenshell/.package-python-${PYTHON_TAG#cp}/ifcopenshell"
 
