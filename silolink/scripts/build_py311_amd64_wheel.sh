@@ -73,6 +73,7 @@ docker run --rm --platform linux/amd64 \
   "$IMAGE" bash -lc '
     set -euo pipefail
     command -v patchelf >/dev/null
+    command -v auditwheel >/dev/null
 
     python3.11 - <<PY
 import platform, re, sys
@@ -377,6 +378,10 @@ with zipfile.ZipFile(wheel) as zf:
 os.chmod(wheel, 0o644)
 print(wheel)
 PY
+
+    auditwheel repair --plat "$TARGET_PLAT" --only-plat --lib-sdir "" \
+      --wheel-dir "$WHEEL_TEMP_DIR/repaired" "$final_wheel"
+    mv "$WHEEL_TEMP_DIR/repaired/$(basename "$final_wheel")" "$final_wheel"
 
     verify_python="$deps_dir/install/python-$PYTHON_VERSION/bin/python3"
     if [ ! -x "$verify_python" ]; then

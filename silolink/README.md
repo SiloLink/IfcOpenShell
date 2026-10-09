@@ -14,6 +14,7 @@
 - Rocky Linux 9 builder，产物要求 GLIBC 2.34+（`manylinux_2_34_x86_64`）
 - upstream `nix/build-all.py`
 - official Open CASCADE 7.8.1 shared dependency stack，使用 upstream packaging helpers 打包运行时依赖
+- 使用 auditwheel repair 补齐非 manylinux 系统库并校验目标平台兼容性
 - upstream `IfcOpenShell/build-outputs:rockylinux9-x64` dependency cache when available
 - 当前 checkout 的 SiloLink source patches
 - 完整 IFC schema 集合；Python wrapper 与全部 native plugins 使用 ABI v2 和 `IFOPSH_SAFE_INSTANCE=ON`
