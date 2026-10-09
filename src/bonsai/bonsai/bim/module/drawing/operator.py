@@ -827,8 +827,17 @@ class CreateDrawing(bpy.types.Operator):
             else:
                 assert False, usage
             no *= sense_factor
-            last_i = len(layer_set.MaterialLayers) - 1
-            for i, layer in enumerate(layer_set.MaterialLayers):
+            # Detect non-conformant exports (e.g. Revit) where DirectionSense=POSITIVE
+            # but the geometry extrudes in the negative direction. If the mesh centroid
+            # in object local space is on the wrong side of the starting plane, flip no.
+            bb = [Vector(v) for v in obj.bound_box]
+            mesh_centroid = sum(bb, Vector((0.0, 0.0, 0.0))) / 8
+            layers = list(layer_set.MaterialLayers)
+            if (mesh_centroid - co).dot(no) < 0:
+                no = -no
+                layers = list(reversed(layers))
+            last_i = len(layers) - 1
+            for i, layer in enumerate(layers):
                 prev_co = co.copy()
                 co += no * layer.LayerThickness * self.unit_scale
 
@@ -2207,7 +2216,6 @@ class CreateSheets(bpy.types.Operator, tool.Ifc.Operator):
         warnings: list[tool.Drawing.SheetWarningType] = []
         n_sheets_created = 0
         for sheet in sheets:
-
             warnings.extend(sheet_warnings := tool.Drawing.validate_sheet_files(sheet))
             if sheet_warnings:
                 continue
@@ -2264,7 +2272,7 @@ class CreateSheets(bpy.types.Operator, tool.Ifc.Operator):
                 # [["inkscape", "svg", "-o", "eps"], ["pstoedit", "-dt", "-f", "dxf:-polyaslines -mm", "eps", "dxf", "-psarg", "-dNOSAFER"]]
                 commands = json.loads(svg2dxf_command)
                 for command in commands:
-                    command[0] = shutil.which(command[0]) or command[0]
+                    command[0] = shutil.which(str(command[0])) or command[0]
                     subprocess.run([replacements.get(c, c) for c in command])
 
             if self.open_viewer:
@@ -5249,7 +5257,7 @@ class FormatElementValueRow(bpy.types.Operator):
 
     custom_expression: bpy.props.StringProperty(
         name="Custom Expression",
-        description=("Custom expression using functions\n" "Use {{value}} as placeholder for the current row's value."),
+        description=("Custom expression using functions\nUse {{value}} as placeholder for the current row's value."),
         default='concat({{value}}, " - additional text")',
     )
 
@@ -5480,9 +5488,9 @@ class ShowElementValuesInstructions(bpy.types.Operator):
         box = layout.box()
         row = box.row()
         row.label(text="Full Documentation:", icon="URL")
-        row.operator("wm.url_open", text="IFC Selector Syntax Guide", icon="URL").url = (
-            "https://docs.ifcopenshell.org/ifcopenshell-python/selector_syntax.html#getting-element-values"
-        )
+        row.operator(
+            "wm.url_open", text="IFC Selector Syntax Guide", icon="URL"
+        ).url = "https://docs.ifcopenshell.org/ifcopenshell-python/selector_syntax.html#getting-element-values"
 
         box = layout.box()
         box.label(text="WORKFLOW: BUILDING LITERALS WITH ROWS", icon="SEQUENCE")

@@ -86,6 +86,7 @@ private:
 	private:
 		open_cascade_kernel* kernel_;
 		std::set<int> duplicates_;
+		std::set<int> duplicate_identities_built_;
 		std::map<int, int> vertex_mapping_;
 		std::map<std::pair<int, int>, TopoDS_Edge> edges_;
 		double eps_;
@@ -107,13 +108,10 @@ private:
 	};
 
 	faceset_helper* faceset_helper_;
-
-	double precision_;
 public:
 	open_cascade_kernel(const ifcopenshell::geom::settings& settings, ifcopenshell::logger& logger = ifcopenshell::logger::root())
 		: abstract_kernel("opencascade", settings, logger)
 		, faceset_helper_(nullptr)
-		, precision_(settings.get<ifcopenshell::geom::settings::Precision>().get())
 	{}
 
 	virtual abstract_kernel* clone(ifcopenshell::logger& logger) const {

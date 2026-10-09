@@ -215,7 +215,10 @@ std::optional<manifold::Manifold> ifcopenshell::geom::manifold_shape::as_manifol
 	return manifold::Manifold::BatchBoolean(solids, manifold::OpType::Add);
 }
 
-void ifcopenshell::geom::manifold_shape::triangulate(ifcopenshell::geom::settings, const ifcopenshell::geom::taxonomy::matrix4& place, ifcopenshell::geom::triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger&) const {
+void ifcopenshell::geom::manifold_shape::triangulate(ifcopenshell::geom::settings settings, const ifcopenshell::geom::taxonomy::matrix4& place, ifcopenshell::geom::triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger&) const {
+    const bool emit_normals = !settings.get<settings::WeldVertices>().get() &&
+                              !settings.get<settings::DontEmitNormals>().get();
+
 	for (const auto& part : parts_) {
 		auto mesh = transform_mesh(part.mesh, place);
 		std::vector<int> indices(mesh.NumVert());
@@ -226,7 +229,7 @@ void ifcopenshell::geom::manifold_shape::triangulate(ifcopenshell::geom::setting
 				mesh.vertProperties[i * mesh.numProp + 0],
 				mesh.vertProperties[i * mesh.numProp + 1],
 				mesh.vertProperties[i * mesh.numProp + 2]);
-            if (mesh.numProp == 6) {
+            if (mesh.numProp >= 6 && emit_normals) {
 				t->addNormal(
 					mesh.vertProperties[i * mesh.numProp + 3],
 					mesh.vertProperties[i * mesh.numProp + 4],
@@ -510,7 +513,11 @@ conversion_result_shape* ifcopenshell::geom::manifold_shape::moved(ifcopenshell:
 		if (part.solid && !solid) {
 			throw std::runtime_error("Failed to transform shape");
 		}
-		moved_parts.emplace_back(mesh, *solid);
+        if (solid) {
+            moved_parts.emplace_back(mesh, *solid);
+        } else {
+            moved_parts.emplace_back(mesh);
+        }
 	}
 	return new manifold_shape(std::move(moved_parts));
 }

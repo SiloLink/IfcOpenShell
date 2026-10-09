@@ -34,7 +34,7 @@ namespace ifcopenshell {
 
 #ifdef IFOPSH_SAFE_INSTANCE
 using pointer_type = std::weak_ptr<instance_data>;
-using shared_pointer_type = shared_pointer_type;
+using shared_pointer_type = std::shared_ptr<instance_data>;
 template <typename T, typename... Args>
 shared_pointer_type make_pointer_type(Args&&... args) {
     return std::make_shared<T>(std::forward<Args>(args)...);
@@ -132,6 +132,11 @@ class IFC_PARSE_API base {
 
     template <class T>
     T as() const {
+        if (!*this) {
+            // Unresolved or malformed attribute reference (e.g. a step-id
+            // that never resolved to an instance). Never dereference it.
+            return T{};
+        }
         if constexpr (std::is_same_v<entity, T>) {
             if (declaration().as_entity() != nullptr) {
                 return T(data_weak());

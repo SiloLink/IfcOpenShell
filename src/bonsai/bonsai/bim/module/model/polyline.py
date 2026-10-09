@@ -26,7 +26,7 @@ import ifcopenshell.util.unit
 from mathutils import Vector
 
 import bonsai.tool as tool
-from bonsai.bim.module.model.decorator import PolylineDecorator
+from bonsai.bim.module.model.decorator import GpuSnapDecorator, PolylineDecorator, ProductDecorator
 
 
 class PolylineOperator:
@@ -112,6 +112,18 @@ class PolylineOperator:
                     self.input_ui.set_value(self.input_type, self.number_output)
             tool.Blender.update_viewport()
             return is_valid
+
+    def set_initial_plane_method(self, context: bpy.types.Context, event: bpy.types.Event, plane_method: str) -> None:
+        self.tool_state.plane_method = plane_method
+        detected_snaps = tool.Snap.detect_snapping_points(context, event, self.objs_2d_bbox, self.tool_state)
+        self.snapping_points = tool.Snap.select_snapping_points(context, event, self.tool_state, detected_snaps)
+        tool.Polyline.calculate_distance_and_angle(context, self.input_ui, self.tool_state)
+        tool.Blender.update_viewport()
+
+    def has_polyline_points(self) -> bool:
+        polyline_props = tool.Model.get_polyline_props()
+        polyline_data = polyline_props.insertion_polyline
+        return len(polyline_data) > 0
 
     def choose_axis(self, event: bpy.types.Event, x: bool = True, y: bool = True, z: bool = False) -> None:
         options = {"X", "Y"}
@@ -380,10 +392,7 @@ class PolylineOperator:
             if event.value == "RELEASE" and event.type in {"ESC"}:
                 self.tool_state.axis_method = None
                 self.tool_state.plane_method = None
-                context.workspace.status_text_set(text=None)
-                PolylineDecorator.uninstall()
-                tool.Polyline.clear_polyline()
-                tool.Blender.update_viewport()
+                self.cleanup(context)
                 return {"CANCELLED"}
 
     def handle_mouse_move(
@@ -415,14 +424,32 @@ class PolylineOperator:
                 if self.snapping_points[0]["type"] not in {"Plane", "Axis"}:
                     should_round = False
 
+                if not self.has_polyline_points():
+                    should_round = False
+
                 tool.Polyline.calculate_distance_and_angle(
                     context, self.input_ui, self.tool_state, should_round=should_round
                 )
                 if should_round:
                     tool.Polyline.calculate_x_y_and_z(context, self.input_ui, self.tool_state)
+                    snap_prop = tool.Model.get_polyline_props().snap_mouse_point[0]
+                    snap_prop.x = self.input_ui.get_number_value("X")
+                    snap_prop.y = self.input_ui.get_number_value("Y")
+                    z = self.input_ui.get_number_value("Z")
+                    if z is not None and z != "":
+                        snap_prop.z = z
 
                 tool.Blender.update_viewport()
             return {"RUNNING_MODAL"}
+
+    def cleanup(self, context: bpy.Types.Context):
+        context.workspace.status_text_set(text=None)
+        PolylineDecorator.uninstall()
+        GpuSnapDecorator.uninstall()
+        ProductDecorator.uninstall()
+        tool.Polyline.clear_polyline()
+        tool.Raycast.clear_cache()
+        tool.Blender.update_viewport()
 
     def set_offset(self, context: bpy.types.Context, relating_type: ifcopenshell.entity_instance) -> None:
         props = tool.Model.get_model_props()
@@ -456,13 +483,13 @@ class PolylineOperator:
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> None:
         PolylineDecorator.install(context)
+        GpuSnapDecorator.install(context, event, detection=tool.Raycast.detect_gpu_snaps)
         tool.Snap.clear_snapping_point()
 
         self.tool_state.use_default_container = False
         self.tool_state.axis_method = None
         self.tool_state.plane_method = None
         self.tool_state.mode = "Mouse"
-        tool.Raycast.clear_snap_objs()
         self.visible_objs = tool.Raycast.get_visible_objects(context)
         for obj in self.visible_objs:
             if bbox_2d := tool.Raycast.get_on_screen_2d_bounding_boxes(context, obj):

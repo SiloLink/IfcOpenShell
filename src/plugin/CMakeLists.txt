@@ -11,7 +11,7 @@ target_include_directories(plugin PUBLIC
 )
 
 if (NOT CREATE_BUNDLE)
-set_target_properties(plugin PROPERTIES 
+set_target_properties(plugin PROPERTIES
     VERSION "${PROJECT_VERSION}"
     SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
 )
@@ -22,6 +22,7 @@ target_compile_definitions(plugin PRIVATE
     PLUGIN_IFCOPENSHELL_VERSION="${PROJECT_VERSION}"
     IFCOPENSHELL_INSTALL_PLUGIN_DIRECTORY="${CMAKE_INSTALL_FULL_LIBDIR}"
 )
+target_compile_definitions(plugin PUBLIC $<$<BOOL:${IFOPSH_SAFE_INSTANCE}>:IFOPSH_SAFE_INSTANCE>)
 
 target_link_libraries(plugin PRIVATE ${Boost_LIBRARIES})
 

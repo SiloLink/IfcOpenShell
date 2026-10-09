@@ -18,6 +18,12 @@
 ################################################################################
 
 # Create a cache entry if absent for environment variables
+#
+# The env var fallback was mostly relied on by the Windows buil. It's not used anymore
+# (all build scripts now pass these as -D cache args instead), so in theory it could be
+# dropped in the future.
+# It also lets unrelated/stray environment state silently configure the build, since these
+# var names aren't namespaced to this project.
 macro(UNIFY_ENVVARS_AND_CACHE VAR)
     if(NOT DEFINED ${VAR} AND DEFINED ENV{${VAR}} AND NOT ENV{${VAR}} STREQUAL "")
         set(${VAR} "$ENV{${VAR}}" CACHE STRING "${VAR}" FORCE)
@@ -72,7 +78,7 @@ function(ifcopenshell_wasm_plugin_link_options TARGET REGISTRATION_SYMBOL)
     endif()
 
     set(plugin_symbols
-        ifcopenshell_plugin_abi_v1
+        ifcopenshell_plugin_abi_v2
         ifcopenshell_plugin_metadata_v1
         ${REGISTRATION_SYMBOL}
     )
@@ -80,6 +86,26 @@ function(ifcopenshell_wasm_plugin_link_options TARGET REGISTRATION_SYMBOL)
     target_link_options(${TARGET} PRIVATE "SHELL:-s SIDE_MODULE=2" ${PLUGIN_OPTIMIZATION})
     foreach(symbol IN LISTS plugin_symbols)
         target_link_options(${TARGET} PRIVATE "LINKER:--export=${symbol}")
+    endforeach()
+endfunction()
+
+# Install the shared third-party runtime DLLs the given targets depend on (e.g. OCCT, PROJ).
+# Static library targets are skipped, as $<TARGET_RUNTIME_DLLS> doesn't support them.
+function(ifcopenshell_install_runtime_dlls)
+    cmake_parse_arguments(ARG "" "DESTINATION" "TARGETS" ${ARGN})
+    # Conda packages get these DLLs from their dependencies.
+    if(NOT MSVC OR DEFINED ENV{CONDA_BUILD})
+        return()
+    endif()
+    if(NOT ARG_DESTINATION)
+        set(ARG_DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+
+    foreach(target ${ARG_TARGETS})
+        get_target_property(target_type ${target} TYPE)
+        if(target_type STREQUAL "SHARED_LIBRARY" OR target_type STREQUAL "MODULE_LIBRARY" OR target_type STREQUAL "EXECUTABLE")
+            install(FILES $<TARGET_RUNTIME_DLLS:${target}> DESTINATION "${ARG_DESTINATION}")
+        endif()
     endforeach()
 endfunction()
 
@@ -134,6 +160,8 @@ function(ifcopenshell_deploy_qt_runtime TARGET)
         TARGET ${TARGET}
         OUTPUT_SCRIPT deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR
+        # Don't deploy vc_redist.exe with windeployqt.
+        NO_COMPILER_RUNTIME
     )
 
     if(NOT IFCOPENSHELL_DEPLOY_QT_TRANSLATIONS)
@@ -155,6 +183,90 @@ function(ifcopenshell_deploy_qt_runtime TARGET)
     endif()
 
     install(SCRIPT ${deploy_script})
+endfunction()
+
+# Stage IfcOpenShell dylibs into the macOS .app bundle's Frameworks/ directory.
+#
+# Two flavours sit alongside each other in <prefix>/lib/ after install:
+#
+#   1. Linked core libs (lib*.dylib) — IfcParse, IfcGeom (output-named
+#      libifcopenshell.geometry.dylib), IfcViewer, plug-in / mapping /
+#      kernel shared libs. With --shared these are runtime @rpath deps
+#      of the app executable. macdeployqt is *supposed* to follow them
+#      but in practice misses non-Qt @rpath deps when the source lib
+#      lives outside the standard system / Qt prefixes, so we stage
+#      them explicitly. (In a static build these are absent from lib/
+#      and the glob just no-ops, so this rule is safe in both modes.)
+#
+#   2. Plug-ins (ifcopenshell_*.dylib, no `lib` prefix) — dlopen-only
+#      deps the plug-in loader resolves at runtime. macdeployqt has
+#      no way to know about these.
+#
+# Both kinds get a flat copy into Contents/Frameworks/. The plug-in
+# loader's primary search path is dirname(libIfcParse) (= Frameworks/
+# inside the bundle), so plug-ins and core libs both find each other
+# on the first probe.
+#
+# The geometry-writer filter drops libifcopenshell.geometry.writer.dylib
+# and the per-schema ifcopenshell_geometry_writer_*.dylib plug-ins
+# (OCCT -> IFC serialization, unused by the apps), and all document
+# serializers except rdb (json/xml are only used by IfcConvert). Mirrors
+# `is_geometry_writer` and `is_json_or_xml_document_serializer` in win/common.py.
+#
+# <prefix>/lib/ is IfcOpenShell-exclusive — Qt / boost / eigen live in
+# their own brew / build prefixes — so a broad *.dylib glob is safe
+# here and automatically picks up any future shared libs without
+# needing to maintain an explicit name list.
+#
+# Subdirectory order in cmake/CMakeLists.txt guarantees that ifcparse/
+# / ifcgeom/ / serializers/ are add_subdirectory'd before the apps,
+# so by the time this install rule fires the *.dylib files are already
+# on disk under <prefix>/lib/.
+function(ifcopenshell_stage_app_bundle_dylibs APP_NAME)
+    if(NOT APPLE)
+        return()
+    endif()
+
+    # A shared OCCT lives in its own dependency prefix, outside the glob below,
+    # and the plug-ins resolve it through @rpath, so it has to be staged too.
+    set(occt_shared_lib_dir "")
+    if(TARGET TKernel)
+        get_target_property(occt_library_type TKernel TYPE)
+        if(occt_library_type STREQUAL "SHARED_LIBRARY")
+            get_target_property(occt_location TKernel LOCATION)
+            get_filename_component(occt_shared_lib_dir "${occt_location}" DIRECTORY)
+        endif()
+    endif()
+    install(CODE "set(_app \"${APP_NAME}.app\")\nset(_occt_shared_lib_dir \"${occt_shared_lib_dir}\")")
+    install(CODE [[
+        set(_fw "${CMAKE_INSTALL_PREFIX}/${_app}/Contents/Frameworks")
+        file(GLOB _ifc_dylibs "${CMAKE_INSTALL_PREFIX}/lib/*.dylib")
+        list(FILTER _ifc_dylibs EXCLUDE REGEX "ifcopenshell[._]geometry[._]writer")
+        # Geometry serializers (obj, svg, glb, ...) and svgfill are only used by IfcConvert and Python.
+        list(FILTER _ifc_dylibs EXCLUDE REGEX "ifcopenshell_geometry_[A-Za-z]+\\.dylib$")
+        # Geometry trees are only used by Python (`ifcopenshell.geom.tree`).
+        list(FILTER _ifc_dylibs EXCLUDE REGEX "ifcopenshell_geometry_tree_")
+
+        set(_ifc_unused_documents ${_ifc_dylibs})
+        list(FILTER _ifc_unused_documents INCLUDE REGEX "ifcopenshell_document_")
+        # Other document serializers (json, xml) are only used by IfcConvert.
+        list(FILTER _ifc_unused_documents EXCLUDE REGEX "ifcopenshell_document_rdb")
+        if(_ifc_unused_documents)
+            list(REMOVE_ITEM _ifc_dylibs ${_ifc_unused_documents})
+        endif()
+
+        if(_ifc_dylibs)
+            message(STATUS "Staging IfcOpenShell dylibs (linked core + plug-ins) into ${_app}/Contents/Frameworks")
+            file(COPY ${_ifc_dylibs} DESTINATION "${_fw}")
+        else()
+            message(WARNING "No IfcOpenShell *.dylib found in lib/ — ${_app} will fail to launch (missing @rpath linked deps) or at IFC load time (missing plug-ins)")
+        endif()
+        if(_occt_shared_lib_dir)
+            file(GLOB _occt_dylibs "${_occt_shared_lib_dir}/libTK*.dylib")
+            message(STATUS "Staging shared OCCT dylibs into ${_app}/Contents/Frameworks")
+            file(COPY ${_occt_dylibs} DESTINATION "${_fw}")
+        endif()
+    ]])
 endfunction()
 
 # Get a list of all OPTION flags from the CMakeLists.txt and store in an output LIST
@@ -252,6 +364,52 @@ function(get_debug_variant NAME LIBRARY POSTFIX)
         string(REPLACE "${RELEASE_SUFFIX}" "${DEBUG_SUFFIX}" LIBRARY ${LIBRARY})
     endif()
     set(${NAME} "${LIBRARY}" PARENT_SCOPE)
+endfunction()
+
+# When building specified config, cmake first tries to find target config by the exact match
+# (e.g. to find `-relwithdebinfo.cmake` dependency for RelWithDebInfo build),
+# but if it fails, it falls back to the first cmake config it can find, alphabetically.
+# If there's a Debug config, then it ends up pulling Debug build as the default.
+# Which is critical on Windows if dependency is using CRT - linking will fail due to a CRT mismatch.
+# To resolve this, we allow `RelWithDebInfo`, `MinSizeRel` to fallback to `Release`.
+#
+# Especially important on a multi-config generator (e.g. Visual Studio),
+# when cmake has to define targets for each possible config.
+# Without this fallback, user would need to build each dependency for each of 4 configs
+# to guarantee switching between them won't break.
+# And in some cases it's not even possible (e.g. OpenCOLLADA hardcodes only Release/Debug builds).
+#
+# Important: we're mixing up MinSizeRel to RelWithDebInfo targets and vice versa, because
+# by setting `MAP_IMPORTED_CONFIG_` we override the fallback, but multi-config builds
+# has to be able to find a way to build a target for each config, otherwise configuration would fail.
+function(avoid_debug_imported_config_fallback)
+    # Only needed on MSVC to avoid CRT mimsatch.
+    # On Unix it's usually okay to mix up Debug and Release configs and we shouldn't block it.
+    if(NOT MSVC)
+        return()
+    endif()
+
+    foreach(_target ${ARGN})
+        if(TARGET ${_target})
+            set_target_properties(${_target} PROPERTIES
+                MAP_IMPORTED_CONFIG_RELWITHDEBINFO "RELWITHDEBINFO;RELEASE;MINSIZEREL"
+                MAP_IMPORTED_CONFIG_MINSIZEREL "MINSIZEREL;RELEASE;RELWITHDEBINFO"
+            )
+        endif()
+    endforeach()
+endfunction()
+
+# Fail the configure if FOUND_VERSION is older than MIN_VERSION.
+#
+# Useful when a package's CMake config can't express minimum-version semantics via
+# find_package()'s own version argument:
+# - it requires an exact full-version or exact-major-version match
+# - the config is missing a -version.cmake file
+function(check_min_version PACKAGE_NAME FOUND_VERSION MIN_VERSION)
+    if("${FOUND_VERSION}" VERSION_LESS "${MIN_VERSION}")
+        message(FATAL_ERROR "${PACKAGE_NAME} ${MIN_VERSION} or newer is required, found ${FOUND_VERSION}.")
+    endif()
+    message(STATUS "${PACKAGE_NAME}: found version ${FOUND_VERSION} (minimum required is ${MIN_VERSION}).")
 endfunction()
 
 function(files_for_ifc_version IFC_VERSION RESULT_NAME)
