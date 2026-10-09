@@ -972,6 +972,58 @@ class TestSectionedSolidHorizontalOffsetUnits(test.bootstrap.IFC4X3):
         assert v[:, 1].mean() == pytest.approx(offset_mm / 1000.0, abs=1e-3)
 
 
+@pytest.mark.skipif(not ifcopenshell.geom.has_geometry_library("opencascade"), reason="requires the OpenCASCADE kernel")
+@pytest.mark.parametrize("representation", ["IfcFacetedBrep", "IfcPolygonalFaceSet"])
+@pytest.mark.parametrize("duplicate", ["none", "same_face", "distinct_face", "reversed_face"])
+def test_coincident_face_loops_retain_one_surface(representation, duplicate):
+    f = ifcopenshell.file(schema="IFC4")
+    coordinates = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 0.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (0.0, 1.0, 1.0),
+    ]
+    indices = [(1, 4, 3, 2), (1, 2, 6, 5), (2, 3, 7, 6), (3, 4, 8, 7), (4, 1, 5, 8), (5, 6, 7, 8)]
+    if representation == "IfcFacetedBrep":
+        points = [f.createIfcCartesianPoint(p) for p in coordinates]
+
+        def make_face(loop):
+            return f.createIfcFace(
+                [f.createIfcFaceOuterBound(f.createIfcPolyLoop([points[i - 1] for i in loop]), True)]
+            )
+    else:
+        points = f.createIfcCartesianPointList3D(coordinates)
+
+        def make_face(loop):
+            return f.createIfcIndexedPolygonalFace(loop)
+
+    faces = [make_face(loop) for loop in indices]
+    if duplicate == "same_face":
+        faces.append(faces[-1])
+    elif duplicate == "distinct_face":
+        faces.append(make_face(indices[-1]))
+    elif duplicate == "reversed_face":
+        faces.append(make_face(tuple(reversed(indices[-1]))))
+
+    if representation == "IfcFacetedBrep":
+        item = f.createIfcFacetedBrep(f.createIfcClosedShell(faces))
+    else:
+        item = f.createIfcPolygonalFaceSet(Coordinates=points, Closed=True, Faces=faces)
+
+    geometry = ifcopenshell.geom.create_shape(ifcopenshell.geom.settings(), item, geometry_library="opencascade")
+    vertices = ifcopenshell.util.shape.get_vertices(geometry)
+    triangles = ifcopenshell.util.shape.get_faces(geometry)
+    assert len(vertices) == 8
+    assert len(triangles) == 12
+    assert vertices.min(axis=0) == pytest.approx((0.0, 0.0, 0.0))
+    assert vertices.max(axis=0) == pytest.approx((1.0, 1.0, 1.0))
+    assert ifcopenshell.util.shape.get_volume(geometry) == pytest.approx(1.0)
+
+
 if __name__ == "__main__":
     import pytest
 

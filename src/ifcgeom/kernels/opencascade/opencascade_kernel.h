@@ -86,8 +86,8 @@ private:
 	private:
 		open_cascade_kernel* kernel_;
 		std::set<int> duplicates_;
-		std::set<int> duplicate_identities_built_;
-		std::map<int, int> vertex_mapping_;
+        std::set<int> loop_identities_built_;
+        std::map<int, int> vertex_mapping_;
 		std::map<std::pair<int, int>, TopoDS_Edge> edges_;
 		double eps_;
 		bool non_manifold_;

@@ -106,11 +106,11 @@ ifcopenshell::geom::open_cascade_kernel::faceset_helper::faceset_helper(
 		non_manifold = 0;
 		duplicate_faces = 0;
 
-		vertex_mapping_.clear();
-		duplicates_.clear();
-		duplicate_identities_built_.clear();
+        vertex_mapping_.clear();
+        duplicates_.clear();
+        loop_identities_built_.clear();
 
-		edge_use.clear();
+        edge_use.clear();
 
 		if (eps_ < ::Precision::Confusion()) {
 			// occt uses some hard coded precision values, don't go smaller than that.
@@ -161,40 +161,42 @@ ifcopenshell::geom::open_cascade_kernel::faceset_helper::faceset_helper(
 		//   - std::pair<bool, edge_set_t> with pair::first populated from external (FaceBound / OuterBound)
 		// The second has been found more reliable for typical models, because inner bound winding can be wrong.
 		// The can be made more resilient by first checking correct population of external and falling back to approach 1.
-		std::set<std::pair<bool, edge_set_t>> edge_sets;
+        std::map<std::pair<bool, edge_set_t>, uint32_t> edge_sets;
 
-		for (auto& loop : loops) {
-			std::vector<std::pair<int, int> > segments;
-			edge_set_t segment_set;
+        for (auto& loop : loops) {
+            std::vector<std::pair<int, int>> segments;
+            edge_set_t segment_set;
 
-			loop_(loop, [&segments, &segment_set](int C, int D, bool) {
-				segment_set.insert(edge_t{ C,D });
-				segments.push_back(std::make_pair(C, D));
-			});
+            loop_(loop, [&segments, &segment_set](int C, int D, bool) {
+                segment_set.insert(edge_t{C, D});
+                segments.push_back(std::make_pair(C, D));
+            });
 
-			const auto edge_set_key = std::make_pair(loop->external.value_or(false), segment_set);
-			if (edge_sets.find(edge_set_key) != edge_sets.end()) {
-				duplicate_faces++;
-				duplicates_.insert(loop->identity());
-				continue;
-			}
-            edge_sets.insert(edge_set_key);
+            const auto edge_set_key = std::make_pair(loop->external.value_or(false), segment_set);
+            auto insertion = edge_sets.emplace(edge_set_key, loop->identity());
+            if (!insertion.second) {
+                duplicate_faces++;
+                if (insertion.first->second != loop->identity()) {
+                    duplicates_.insert(loop->identity());
+                }
+                continue;
+            }
 
-			if (segments.size() >= 3) {
-				for (auto& p : segments) {
-					edge_use[p] ++;
-				}
-			} else {
-				loops_removed += 1;
-			}
-		}
+            if (segments.size() >= 3) {
+                for (auto& p : segments) {
+                    edge_use[p]++;
+                }
+            } else {
+                loops_removed += 1;
+            }
+        }
 
-		if (edge_use.size() != 0) {
-			break;
-		} else {
-			eps_ /= 10.;
-		}
-	}
+        if (edge_use.size() != 0) {
+            break;
+        } else {
+            eps_ /= 10.;
+        }
+    }
 
 	for (auto& p : edge_use) {
 		int a, b;
@@ -252,16 +254,14 @@ bool ifcopenshell::geom::open_cascade_kernel::faceset_helper::wire(const ifcopen
 }
 
 bool ifcopenshell::geom::open_cascade_kernel::faceset_helper::wires(const ifcopenshell::geom::taxonomy::loop::ptr loop, NCollection_List<TopoDS_Shape>& wires) {
-	// A loop whose edge set duplicates another's is skipped. When the duplicates
-	// share one identity (the same IfcFace listed repeatedly, #418), set semantics
-	// keep exactly one copy: the first occurrence builds, the rest are skipped.
-	if (duplicates_.find(loop->identity()) != duplicates_.end()) {
-		if (!duplicate_identities_built_.insert(loop->identity()).second) {
-			return false;
-		}
-	}
-	TopoDS_Wire wire;
-	BRep_Builder builder;
+    // Keep one identity per edge set and build it once, including when the same
+    // IfcFace is listed repeatedly. Distinct coincident loops remain excluded.
+    if (duplicates_.find(loop->identity()) != duplicates_.end() ||
+        !loop_identities_built_.insert(loop->identity()).second) {
+        return false;
+    }
+    TopoDS_Wire wire;
+    BRep_Builder builder;
 	builder.MakeWire(wire);
 	int count = 0;
 	loop_(loop, [this, &builder, &wire, &count](int A, int B, bool fwd) {
