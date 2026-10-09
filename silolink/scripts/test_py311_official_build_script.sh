@@ -19,7 +19,7 @@ grep -q "rockylinux9-x64" "$tmp_output"
 grep -q "OCCT 7.8.1" "$tmp_output"
 grep -q "ADD_COMMIT_SHA=" "$tmp_output"
 grep -q "Wheel ABI tag:       cp311" "$tmp_output"
-grep -q "ifcopenshell-0.9.0+silolink.1-cp311-cp311-manylinux_2_31_x86_64.whl" "$tmp_output"
+grep -q "ifcopenshell-0.9.1+silolink.1-cp311-cp311-manylinux_2_31_x86_64.whl" "$tmp_output"
 
 grep -q "FROM rockylinux:9" silolink/docker/Dockerfile.py311-build
 grep -q "Relocated upstream cache paths" silolink/scripts/build_py311_amd64_wheel.sh
