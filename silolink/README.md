@@ -11,7 +11,7 @@
 
 目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.1`：
 
-- Rocky Linux 9 builder
+- Rocky Linux 9 builder，产物要求 GLIBC 2.34+（`manylinux_2_34_x86_64`）
 - upstream `nix/build-all.py`
 - official Open CASCADE 7.8.1 shared dependency stack，使用 upstream packaging helpers 打包运行时依赖
 - upstream `IfcOpenShell/build-outputs:rockylinux9-x64` dependency cache when available

@@ -15,7 +15,7 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.11.8}"
 PYTHON_TAG="${PYTHON_TAG:-cp311}"
 ABI_TAG="${ABI_TAG:-cp311}"
 PYTHON_BUILD_FLAG="${PYTHON_BUILD_FLAG:--py-311}"
-TARGET_PLAT="${TARGET_PLAT:-manylinux_2_31_x86_64}"
+TARGET_PLAT="${TARGET_PLAT:-manylinux_2_34_x86_64}"
 USE_UPSTREAM_CACHE="${USE_UPSTREAM_CACHE:-1}"
 UPSTREAM_CACHE_REPO="${UPSTREAM_CACHE_REPO:-https://github.com/IfcOpenShell/build-outputs.git}"
 UPSTREAM_CACHE_REF="${UPSTREAM_CACHE_REF:-rockylinux9-x64}"
@@ -67,6 +67,7 @@ docker run --rm --platform linux/amd64 \
   -e UPSTREAM_CACHE_REPO="$UPSTREAM_CACHE_REPO" \
   -e UPSTREAM_CACHE_REF="$UPSTREAM_CACHE_REF" \
   -e ADD_COMMIT_SHA="$ADD_COMMIT_SHA" \
+  -e NO_CLEAN \
   -v "$REPO_ROOT:/workspace:Z" \
   -w /workspace \
   "$IMAGE" bash -lc '
