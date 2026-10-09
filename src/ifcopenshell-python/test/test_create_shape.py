@@ -110,9 +110,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
-        shape = ifcopenshell.geom.create_shape(
-            settings, representation, geometry_library=geometry_library
-        )
+        shape = ifcopenshell.geom.create_shape(settings, representation, geometry_library=geometry_library)
 
         faces = ifcopenshell.util.shape.get_faces(shape)
         material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
@@ -142,12 +140,8 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         ifc_file = ifcopenshell.file(schema="IFC4")
         origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
         axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
-        context = ifc_file.createIfcGeometricRepresentationContext(
-            None, "Model", 3, 1e-5, axis, None
-        )
-        ifc_file.createIfcProject(
-            ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None
-        )
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
+        ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None)
         placement = ifc_file.createIfcLocalPlacement(None, axis)
         host = make_face_set(
             (
@@ -171,9 +165,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         )
         colours = ifc_file.createIfcColourRgbList(palette)
         ifc_file.createIfcIndexedColourMap(host, 0.8, colours, (1, 2, 3, 4, 5, 6))
-        host_representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (host,)
-        )
+        host_representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (host,))
         wall = ifc_file.createIfcWall(
             ifcopenshell.guid.new(),
             None,
@@ -197,9 +189,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (1.0, 1.1, 2.0),
             )
         )
-        void_representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (void,)
-        )
+        void_representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (void,))
         opening = ifc_file.createIfcOpeningElement(
             ifcopenshell.guid.new(),
             None,
@@ -211,9 +201,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
             None,
             None,
         )
-        ifc_file.createIfcRelVoidsElement(
-            ifcopenshell.guid.new(), None, None, None, wall, opening
-        )
+        ifc_file.createIfcRelVoidsElement(ifcopenshell.guid.new(), None, None, None, wall, opening)
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
@@ -227,9 +215,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         vertices = ifcopenshell.util.shape.get_vertices(shape.geometry)
         faces = ifcopenshell.util.shape.get_faces(shape.geometry)
         actual = {
-            tuple(round(float(channel), 6) for channel in materials[index])
-            for index in material_ids
-            if index >= 0
+            tuple(round(float(channel), 6) for channel in materials[index]) for index in material_ids if index >= 0
         }
         expected = {(*colour, 0.8) for colour in palette}
 
@@ -260,12 +246,8 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         ifc_file = ifcopenshell.file(schema="IFC4")
         origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
         axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
-        context = ifc_file.createIfcGeometricRepresentationContext(
-            None, "Model", 3, 1e-5, axis, None
-        )
-        ifc_file.createIfcProject(
-            ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None
-        )
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
+        ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None)
         placement = ifc_file.createIfcLocalPlacement(None, axis)
 
         coordinates = (
@@ -323,18 +305,14 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         points = ifc_file.createIfcCartesianPointList3D(coordinates)
         faces = tuple(ifc_file.createIfcIndexedPolygonalFace(indices) for indices in face_indices)
         face_set = ifc_file.createIfcPolygonalFaceSet(points, True, faces, None)
-        colours = ifc_file.createIfcColourRgbList(
-            ((1.0, 1.0, 1.0), (0.47, 0.52, 0.47), (0.69, 0.59, 0.48))
-        )
+        colours = ifc_file.createIfcColourRgbList(((1.0, 1.0, 1.0), (0.47, 0.52, 0.47), (0.69, 0.59, 0.48)))
         ifc_file.createIfcIndexedColourMap(
             face_set,
             1.0,
             colours,
             (1, 2, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1),
         )
-        representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (face_set,)
-        )
+        representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
         wall = ifc_file.createIfcWall(
             ifcopenshell.guid.new(),
             None,
@@ -370,9 +348,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (2, 3, 7, 6),
             )
         )
-        opening_face_set = ifc_file.createIfcPolygonalFaceSet(
-            opening_points, True, opening_faces, None
-        )
+        opening_face_set = ifc_file.createIfcPolygonalFaceSet(opening_points, True, opening_faces, None)
         opening_representation = ifc_file.createIfcShapeRepresentation(
             context, "Body", "Tessellation", (opening_face_set,)
         )
@@ -383,15 +359,11 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
             None,
             None,
             ifc_file.createIfcLocalPlacement(placement, axis),
-            ifc_file.createIfcProductDefinitionShape(
-                None, None, (opening_representation,)
-            ),
+            ifc_file.createIfcProductDefinitionShape(None, None, (opening_representation,)),
             None,
             None,
         )
-        ifc_file.createIfcRelVoidsElement(
-            ifcopenshell.guid.new(), None, None, None, wall, opening
-        )
+        ifc_file.createIfcRelVoidsElement(ifcopenshell.guid.new(), None, None, None, wall, opening)
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
@@ -407,14 +379,10 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
 
     def test_indexed_colours_follow_triangulated_faces(self):
         ifc_file = ifcopenshell.file(schema="IFC4")
-        project = ifc_file.createIfcProject(
-            ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None
-        )
+        project = ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None)
         origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
         axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
-        context = ifc_file.createIfcGeometricRepresentationContext(
-            None, "Model", 3, 1e-5, axis, None
-        )
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
         project.RepresentationContexts = [context]
 
         points = ifc_file.createIfcCartesianPointList3D(
@@ -425,16 +393,10 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (1.0, 1.0, 0.0),
             )
         )
-        face_set = ifc_file.createIfcTriangulatedFaceSet(
-            points, None, False, ((1, 2, 3), (2, 4, 3)), None
-        )
-        colours = ifc_file.createIfcColourRgbList(
-            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
-        )
+        face_set = ifc_file.createIfcTriangulatedFaceSet(points, None, False, ((1, 2, 3), (2, 4, 3)), None)
+        colours = ifc_file.createIfcColourRgbList(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
         ifc_file.createIfcIndexedColourMap(face_set, 0.6, colours, (1, 2))
-        representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (face_set,)
-        )
+        representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
@@ -442,10 +404,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
 
         material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
         materials = ifcopenshell.util.shape.get_material_colors(shape)
-        face_colours = [
-            tuple(round(float(channel), 6) for channel in materials[index])
-            for index in material_ids
-        ]
+        face_colours = [tuple(round(float(channel), 6) for channel in materials[index]) for index in material_ids]
 
         assert face_colours == [(1.0, 0.0, 0.0, 0.6), (0.0, 1.0, 0.0, 0.6)]
 
@@ -470,9 +429,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (13.825, 2.96),
                 (13.825, 0.0),
             )
-            points = ifc_file.createIfcCartesianPointList3D(
-                tuple((x, y, z) for y in (0.2, 0.0) for x, z in profile)
-            )
+            points = ifc_file.createIfcCartesianPointList3D(tuple((x, y, z) for y in (0.2, 0.0) for x, z in profile))
             face_indices = (
                 (1, 2, 3, 4, 5, 6, 7, 8),
                 (2, 1, 9, 10),
@@ -497,9 +454,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                     colours,
                     (1, 2, 2, 2, 1, 1, 1, 1, 1, 1),
                 )
-            representation = ifc_file.createIfcShapeRepresentation(
-                context, "Body", "Tessellation", (face_set,)
-            )
+            representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
             settings = ifcopenshell.geom.settings()
             settings.set("apply-default-materials", False)
             return ifcopenshell.geom.create_shape(settings, representation)
@@ -509,8 +464,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
             return sorted(
                 tuple(
                     sorted(
-                        tuple(round(float(channel), 9) for channel in vertices[vertex_index])
-                        for vertex_index in face
+                        tuple(round(float(channel), 9) for channel in vertices[vertex_index]) for vertex_index in face
                     )
                 )
                 for face in ifcopenshell.util.shape.get_faces(shape)
