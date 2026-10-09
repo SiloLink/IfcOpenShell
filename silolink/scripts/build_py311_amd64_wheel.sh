@@ -10,6 +10,7 @@ BUILD_DIR="${BUILD_DIR:-build_py311_official}"
 WHEEL_BUILD_DIR="${WHEEL_BUILD_DIR:-wheel_build_py311}"
 WHEEL_TEMP_DIR="${WHEEL_TEMP_DIR:-wheel_temp_py311}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-0.9.1+silolink.1}"
+IFC_SCHEMAS="2x3;4;4x1;4x2;4x3;4x3_tc1;4x3_add1;4x3_add2"
 PYTHON_VERSION="${PYTHON_VERSION:-3.11.8}"
 PYTHON_TAG="${PYTHON_TAG:-cp311}"
 ABI_TAG="${ABI_TAG:-cp311}"
@@ -31,7 +32,8 @@ Python:              $PYTHON_VERSION ($PYTHON_TAG / $PYTHON_BUILD_FLAG)
 Package version:      $PACKAGE_VERSION
 Wheel ABI tag:       $ABI_TAG
 Wheel platform tag:   $TARGET_PLAT
-Dependency stack:     upstream nix/build-all.py, OCCT 7.8.1
+Dependency stack:     upstream nix/build-all.py, shared OCCT 7.8.1
+IFC schemas:          $IFC_SCHEMAS
 Upstream cache:       $USE_UPSTREAM_CACHE ($UPSTREAM_CACHE_REF)
 Add commit SHA:       $ADD_COMMIT_SHA
 EOF
@@ -41,7 +43,7 @@ if [ "$DRY_RUN" = "1" ]; then
 DRY RUN:
   docker run --platform linux/amd64 -v "$REPO_ROOT:/workspace" "$IMAGE"
   cache branch: $UPSTREAM_CACHE_REF
-  build command: BUILD_CFG=Release IFCOS_NUM_BUILD_PROCS=$BUILD_JOBS ADD_COMMIT_SHA=$ADD_COMMIT_SHA python3.11 ./nix/build-all.py -v --diskcleanup $PYTHON_BUILD_FLAG IfcOpenShell-Python
+  build command: BUILD_CFG=Release IFCOS_NUM_BUILD_PROCS=$BUILD_JOBS ADD_COMMIT_SHA=$ADD_COMMIT_SHA python3.11 ./nix/build-all.py -v --diskcleanup --occt-shared --schemas "$IFC_SCHEMAS" $PYTHON_BUILD_FLAG IfcOpenShell-Python
   package command: python3.11 -m build --wheel, repacked to ifcopenshell-$PACKAGE_VERSION-$PYTHON_TAG-$ABI_TAG-$TARGET_PLAT.whl
 EOF
   exit 0
@@ -55,6 +57,7 @@ docker run --rm --platform linux/amd64 \
   -e WHEEL_BUILD_DIR="$WHEEL_BUILD_DIR" \
   -e WHEEL_TEMP_DIR="$WHEEL_TEMP_DIR" \
   -e PACKAGE_VERSION="$PACKAGE_VERSION" \
+  -e IFC_SCHEMAS="$IFC_SCHEMAS" \
   -e PYTHON_VERSION="$PYTHON_VERSION" \
   -e PYTHON_TAG="$PYTHON_TAG" \
   -e ABI_TAG="$ABI_TAG" \
@@ -68,6 +71,7 @@ docker run --rm --platform linux/amd64 \
   -w /workspace \
   "$IMAGE" bash -lc '
     set -euo pipefail
+    command -v patchelf >/dev/null
 
     python3.11 - <<PY
 import platform, re, sys
@@ -179,7 +183,7 @@ PY
     fi
 
     echo "Running upstream build-all.py for py311 IfcOpenShell-Python..."
-    python3.11 ./nix/build-all.py -v --diskcleanup "$PYTHON_BUILD_FLAG" IfcOpenShell-Python
+    python3.11 ./nix/build-all.py -v --diskcleanup --occt-shared --schemas "$IFC_SCHEMAS" "$PYTHON_BUILD_FLAG" IfcOpenShell-Python
 
     deps_dir="$BUILD_DIR/Linux/x86_64"
     module_root="$deps_dir/install/ifcopenshell/python-$PYTHON_VERSION"
@@ -187,7 +191,25 @@ PY
       echo "ERROR: expected ifcopenshell module output at $module_root"
       exit 1
     fi
-    module_pkg="$module_root"
+    python3.11 - <<PY
+import importlib.util
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path("nix").resolve()))
+spec = importlib.util.spec_from_file_location("package_zip_archives", "nix/package-zip-archives.py")
+packaging = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(packaging)
+packaging.ARGS = packaging.Args("linux64", "INFO", True, True, True)
+install_root = Path("$deps_dir/install")
+runtime = packaging.get_runtime_info(install_root, "")
+packaging.package_python_wrapper(
+    Path("$module_root"), install_root / "ifcopenshell", "", Path("wheels"), "linux64", runtime.runtime_dirs
+)
+if packaging.HAS_MISSING_DEPENDENCIES:
+    raise SystemExit("Missing native runtime dependencies in the staged Python package")
+PY
+    module_pkg="$deps_dir/install/ifcopenshell/.package-python-${PYTHON_TAG#cp}/ifcopenshell"
 
     wrapper_so="$(find "$module_pkg" -maxdepth 1 -name "_ifcopenshell_wrapper.cpython-311-x86_64-linux-gnu.so" -print -quit)"
     if [ -z "$wrapper_so" ]; then
@@ -199,10 +221,6 @@ PY
     echo "Built wrapper:"
     ls -lh "$wrapper_so"
     ldd "$wrapper_so" | tee /tmp/ifcopenshell-wrapper-ldd.txt
-    if grep -q "libTK" /tmp/ifcopenshell-wrapper-ldd.txt; then
-      echo "ERROR: wrapper dynamically links OpenCascade libTK*.so; expected upstream static OCCT layout"
-      exit 1
-    fi
 
     rm -rf "$WHEEL_BUILD_DIR" "$WHEEL_TEMP_DIR"
     mkdir -p "$WHEEL_BUILD_DIR" "$WHEEL_TEMP_DIR" wheels
@@ -221,7 +239,7 @@ for rel in ("pyproject.toml", "ifcopenshell/__init__.py"):
     path.write_text(text.replace(old, f"version = \"{package_version}\""))
 PY
 
-    native_modules=("$module_pkg"/*.so)
+    native_modules=("$module_pkg"/*.so*)
     if [ "${#native_modules[@]}" -lt 2 ]; then
       echo "ERROR: v0.9 native plugin modules were not produced in $module_pkg"
       exit 1
@@ -351,7 +369,12 @@ PY
     "$WHEEL_TEMP_DIR/verify-venv/bin/python" - <<PY
 import ifcopenshell
 import ifcopenshell.geom
-print("verify import", ifcopenshell.version)
+expected_schemas = {"IFC" + schema.upper() for schema in "$IFC_SCHEMAS".split(";")}
+actual_schemas = {name for name in ifcopenshell.ifcopenshell_wrapper.schema_names() if name.startswith("IFC")}
+assert actual_schemas == expected_schemas, (actual_schemas, expected_schemas)
+for schema in sorted(expected_schemas):
+    ifcopenshell.file(schema=schema)
+print("verify import", ifcopenshell.version, sorted(actual_schemas))
 PY
 
     ls -lh "$final_wheel"

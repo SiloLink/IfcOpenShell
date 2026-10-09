@@ -41,7 +41,7 @@ RUN dnf update -y \
         zip \
         zlib-devel \
         byacc \
-    && python3.11 -m pip install --upgrade pip build wheel packaging typing_extensions \
+    && python3.11 -m pip install --upgrade pip build wheel packaging typing_extensions patchelf \
     && git lfs install --system \
     && git config --global --add safe.directory '*' \
     && dnf clean all

@@ -13,7 +13,7 @@
 
 - Rocky Linux 9 builder
 - upstream `nix/build-all.py`
-- official Open CASCADE 7.8.1 static dependency stack
+- official Open CASCADE 7.8.1 shared dependency stack，使用 upstream packaging helpers 打包运行时依赖
 - upstream `IfcOpenShell/build-outputs:rockylinux9-x64` dependency cache when available
 - 当前 checkout 的 SiloLink source patches
 - 完整 IFC schema 集合；Python wrapper 与全部 native plugins 使用 ABI v2 和 `IFOPSH_SAFE_INSTANCE=ON`

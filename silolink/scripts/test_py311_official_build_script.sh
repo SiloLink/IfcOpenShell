@@ -15,6 +15,8 @@ DRY_RUN=1 IMAGE=ifcopenshell-build-py311-amd64-test BUILD_JOBS=7 \
 grep -q "nix/build-all.py" "$tmp_output"
 grep -q "IfcOpenShell-Python" "$tmp_output"
 grep -q -- "-py-311" "$tmp_output"
+grep -q -- "--occt-shared" "$tmp_output"
+grep -q -- '--schemas "2x3;4;4x1;4x2;4x3;4x3_tc1;4x3_add1;4x3_add2"' "$tmp_output"
 grep -q "rockylinux9-x64" "$tmp_output"
 grep -q "OCCT 7.8.1" "$tmp_output"
 grep -q "ADD_COMMIT_SHA=" "$tmp_output"
