@@ -209,7 +209,8 @@ class UpdateCurrentStyle(bpy.types.Operator):
     bl_idname = "bim.update_current_style"
     bl_label = "Update Current Style"
     bl_description = (
-        "Update style for all selected objects according to current style type\n(Shading/External).\n\n"
+        "Update style for all selected objects according to current style type\n(Shading/External).\n"
+        + "External styles are reloaded from their .blend file.\n\n"
         + "SHIFT+CLICK to update ALL styles in the .ifc file to current style type"
     )
     bl_options = {"REGISTER", "UNDO"}
@@ -232,6 +233,11 @@ class UpdateCurrentStyle(bpy.types.Operator):
         if self.update_all:
             sprops = tool.Style.get_style_props()
             sprops.active_style_type = current_style_type
+            if current_style_type == "External":
+                for mat in bpy.data.materials:
+                    if tool.Blender.get_ifc_definition_id(mat) == 0:
+                        continue
+                    self.reload_external_style(mat)
             return {"FINISHED"}
 
         updated_materials: set[bpy.types.Material] = set()
@@ -247,8 +253,20 @@ class UpdateCurrentStyle(bpy.types.Operator):
                 if mat in updated_materials:
                     continue
                 msprops_.active_style_type = current_style_type
+                if current_style_type == "External":
+                    self.reload_external_style(mat)
                 updated_materials.add(mat)
         return {"FINISHED"}
+
+    def reload_external_style(self, material: bpy.types.Material) -> None:
+        # Setting active_style_type only flips the cached dual-branch outputs,
+        # so re-append from the .blend to pick up changes made to the external style.
+        if not tool.Style.has_blender_external_style(tool.Style.get_style_elements(material)):
+            return
+        try:
+            bpy.ops.bim.activate_external_style(material_name=material.name)
+        except RuntimeError as error:
+            self.report({"WARNING"}, str(error))
 
 
 class SetAssetMaterialToExternalStyle(bpy.types.Operator):
@@ -457,7 +475,7 @@ class ActivateExternalStyle(bpy.types.Operator):
 
         db = tool.Blender.append_data_block(str(style_path), data_block_type, data_block)
         if not db["data_block"]:
-            self.report({"ERROR"}, f"Error loading external style for \"{material.name}\" - {db['msg']}")
+            self.report({"ERROR"}, f'Error loading external style for "{material.name}" - {db["msg"]}')
             return {"CANCELLED"}
 
         ext_mat = db["data_block"]
@@ -1408,8 +1426,6 @@ class AssignStyleToSelected(bpy.types.Operator, tool.Ifc.Operator):
         if has_items:
             gprops = tool.Geometry.get_geometry_props()
             tool.Geometry.reload_representation(gprops.representation_obj)
-            bpy.ops.bim.disable_editing_representation_items()
-            bpy.ops.bim.enable_editing_representation_items()
 
         for representation in representations:
             ifcopenshell.api.style.assign_representation_styles(

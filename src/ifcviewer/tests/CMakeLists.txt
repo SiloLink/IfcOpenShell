@@ -46,10 +46,17 @@ if(WITH_MESH_OPTIMIZER)
     target_compile_definitions(test_lod_builder PRIVATE -DWITH_MESH_OPTIMIZER)
 endif()
 
-# SidecarCompress: zstd compress/decompress wrappers. Links the system libzstd.
-# SidecarCache now (de)compresses geometry + metadata, so every test that
-# compiles SidecarCache.cpp needs SidecarCompress.cpp + libzstd too.
-find_library(ZSTD_LIBRARY NAMES zstd libzstd)
+# SidecarCompress: zstd compress/decompress wrappers. Prefer the imported zstd
+# config target (carries include dirs on Windows/pixi builds); fall back to
+# find_library for distro packages. SidecarCache now (de)compresses geometry +
+# metadata, so every test that compiles SidecarCache.cpp needs SidecarCompress.cpp
+# + libzstd too.
+find_package(zstd QUIET)
+if(TARGET zstd::libzstd_static)
+    set(ZSTD_LIBRARY zstd::libzstd_static)
+else()
+    find_library(ZSTD_LIBRARY NAMES zstd libzstd)
+endif()
 add_ifcviewer_unit_test(test_sidecar_compress
     SOURCES ${IFCVIEWER_SRC}/SidecarCompress.cpp
     LIBS ${ZSTD_LIBRARY}
@@ -90,10 +97,29 @@ add_ifcviewer_unit_test(test_sidecar_layout
     LIBS ${ZSTD_LIBRARY}
 )
 
+# SidecarSerializer: the Qt-free assembly shared by SidecarBuilder and the
+# ifcconvert .ifcview serializer plugin. finalize() also runs LodBuilder and
+# the SidecarLayout Morton pass, so those sources are pulled in too.
+find_package(Eigen3 ${EIGEN_MIN_VERSION} REQUIRED)
+add_ifcviewer_unit_test(test_sidecar_serializer
+    SOURCES
+        ${IFCVIEWER_SRC}/SidecarSerializer.cpp
+        ${IFCVIEWER_SRC}/SidecarCache.cpp
+        ${IFCVIEWER_SRC}/SidecarCompress.cpp
+        ${IFCVIEWER_SRC}/SidecarLayout.cpp
+        ${IFCVIEWER_SRC}/ChunkPlanner.cpp
+        ${IFCVIEWER_SRC}/LodBuilder.cpp
+    LIBS ${ZSTD_LIBRARY} Eigen3::Eigen
+)
+if(WITH_MESH_OPTIMIZER)
+    target_compile_definitions(test_sidecar_serializer PRIVATE -DWITH_MESH_OPTIMIZER)
+    target_link_libraries(test_sidecar_serializer PRIVATE meshoptimizer::meshoptimizer)
+endif()
+
 # InstanceCompose: matrix composition + cross-model object_id lookup.
 # Pulls in wgpu_native for the WGPUBuffer typedef via ModelGpuData.h
 # (never touched at runtime). Eigen for Matrix4d.
-find_package(Eigen3 REQUIRED)
+find_package(Eigen3 ${EIGEN_MIN_VERSION} REQUIRED)
 add_ifcviewer_unit_test(test_instance_compose
     SOURCES ${IFCVIEWER_SRC}/InstanceCompose.cpp
     LIBS wgpu_native Eigen3::Eigen
@@ -109,6 +135,12 @@ endif()
 add_ifcviewer_unit_test(test_selection)
 add_ifcviewer_unit_test(test_visibility)
 
+# GpuBudget: the pure policy deciding how much device memory the geometry
+# cache may hold and how it yields under pressure. No wgpu at all.
+add_ifcviewer_unit_test(test_gpu_budget
+    SOURCES ${IFCVIEWER_SRC}/GpuBudget.cpp
+)
+
 # BufferPool sub-allocator invariants. The pool's wgpu calls live inside
 # addSubBuffer() (the growth path); tests use the addSubBufferForTesting
 # seam to preseed sub-pools with fake handles, so the only wgpu touchpoint
@@ -117,7 +149,7 @@ add_ifcviewer_unit_test(test_visibility)
 # the pool go out of scope holding any. Linking wgpu_native satisfies the
 # symbol regardless.
 add_ifcviewer_unit_test(test_buffer_pool
-    SOURCES ${IFCVIEWER_SRC}/BufferPool.cpp
+    SOURCES ${IFCVIEWER_SRC}/BufferPool.cpp ${IFCVIEWER_SRC}/GpuAllocScope.cpp
     LIBS wgpu_native
 )
 if(UNIX AND NOT APPLE AND WGPU_NATIVE_LIB_DIR)
@@ -144,7 +176,7 @@ endif()
 # directly and enable AUTOMOC for the Q_OBJECT moc-generation.
 find_package(Qt${QT_VERSION} COMPONENTS Core Gui Test REQUIRED PATHS ${QT_DIR})
 
-find_package(Eigen3 REQUIRED)
+find_package(Eigen3 ${EIGEN_MIN_VERSION} REQUIRED)
 
 add_executable(test_federation
     test_federation.cpp

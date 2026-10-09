@@ -47,6 +47,10 @@
 // TODO add '# pragma warning(pop)' to the very end of the file
 %}
 
+// Before the SWIG library includes, so their classes (iterators, std::vector and
+// std::array wrappers) get prototype docstrings too; validate_stub reads them.
+%feature("autodoc", "1");
+
 %include "stdint.i"
 %include "std_array.i"
 %include "std_vector.i"
@@ -243,7 +247,6 @@
 %{
 	#include "../ifcgeom/iterator.h"
 	#include "../ifcgeom/tree.h"
-	#include "../ifcgeom/serialization/serialization.h"
 	#include "../ifcgeom/taxonomy.h"
 	#include "../ifcgeom/function_item_evaluator.h"
 
@@ -269,7 +272,6 @@
 %}
 
 // Create docstrings for generated python code.
-%feature("autodoc", "1");
 
 %include "utils/type_conversion.i"
 
@@ -280,7 +282,6 @@
 %module ifcopenshell_wrapper %{
 	#include "../ifcgeom/converter.h"
 	#include "../ifcgeom/tree.h"
-	#include "../ifcgeom/serialization/serialization.h"
 	#include "../ifcgeom/taxonomy.h"
 	#include "../ifcgeom/function_item_evaluator.h"
 	#include "../ifcgeom/iterator.h"

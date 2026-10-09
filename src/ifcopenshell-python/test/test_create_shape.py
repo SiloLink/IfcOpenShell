@@ -1,10 +1,12 @@
 import functools
 import itertools
+import math
 import multiprocessing
 import operator
 import os
 from typing import get_args
 
+import numpy as np
 import pytest
 
 import ifcopenshell
@@ -25,9 +27,9 @@ fn = os.path.join(os.path.dirname(__file__), "fixtures/ColumnPSetsOfSets.ifc")
 class TestGeomSettings:
     def test_settings(self):
         settings = ifcopenshell.geom.settings()
-        assert set(get_args(ifcopenshell.geom.SETTING)) == set(
-            settings.setting_names()
-        ), "Also need to update IfcPython.i, if new settings were added/removed."
+        assert set(get_args(ifcopenshell.geom.SETTING)) == set(settings.setting_names()), (
+            "Also need to update IfcPython.i, if new settings were added/removed."
+        )
 
         assert "use-python-opencascade" in settings.setting_names()
         assert settings.get(settings.USE_PYTHON_OPENCASCADE) is False
@@ -108,9 +110,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
-        shape = ifcopenshell.geom.create_shape(
-            settings, representation, geometry_library=geometry_library
-        )
+        shape = ifcopenshell.geom.create_shape(settings, representation, geometry_library=geometry_library)
 
         faces = ifcopenshell.util.shape.get_faces(shape)
         material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
@@ -140,12 +140,8 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         ifc_file = ifcopenshell.file(schema="IFC4")
         origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
         axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
-        context = ifc_file.createIfcGeometricRepresentationContext(
-            None, "Model", 3, 1e-5, axis, None
-        )
-        ifc_file.createIfcProject(
-            ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None
-        )
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
+        ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None)
         placement = ifc_file.createIfcLocalPlacement(None, axis)
         host = make_face_set(
             (
@@ -169,9 +165,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         )
         colours = ifc_file.createIfcColourRgbList(palette)
         ifc_file.createIfcIndexedColourMap(host, 0.8, colours, (1, 2, 3, 4, 5, 6))
-        host_representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (host,)
-        )
+        host_representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (host,))
         wall = ifc_file.createIfcWall(
             ifcopenshell.guid.new(),
             None,
@@ -195,9 +189,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (1.0, 1.1, 2.0),
             )
         )
-        void_representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (void,)
-        )
+        void_representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (void,))
         opening = ifc_file.createIfcOpeningElement(
             ifcopenshell.guid.new(),
             None,
@@ -209,9 +201,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
             None,
             None,
         )
-        ifc_file.createIfcRelVoidsElement(
-            ifcopenshell.guid.new(), None, None, None, wall, opening
-        )
+        ifc_file.createIfcRelVoidsElement(ifcopenshell.guid.new(), None, None, None, wall, opening)
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
@@ -225,9 +215,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         vertices = ifcopenshell.util.shape.get_vertices(shape.geometry)
         faces = ifcopenshell.util.shape.get_faces(shape.geometry)
         actual = {
-            tuple(round(float(channel), 6) for channel in materials[index])
-            for index in material_ids
-            if index >= 0
+            tuple(round(float(channel), 6) for channel in materials[index]) for index in material_ids if index >= 0
         }
         expected = {(*colour, 0.8) for colour in palette}
 
@@ -258,12 +246,8 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         ifc_file = ifcopenshell.file(schema="IFC4")
         origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
         axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
-        context = ifc_file.createIfcGeometricRepresentationContext(
-            None, "Model", 3, 1e-5, axis, None
-        )
-        ifc_file.createIfcProject(
-            ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None
-        )
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
+        ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, (context,), None)
         placement = ifc_file.createIfcLocalPlacement(None, axis)
 
         coordinates = (
@@ -321,18 +305,14 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
         points = ifc_file.createIfcCartesianPointList3D(coordinates)
         faces = tuple(ifc_file.createIfcIndexedPolygonalFace(indices) for indices in face_indices)
         face_set = ifc_file.createIfcPolygonalFaceSet(points, True, faces, None)
-        colours = ifc_file.createIfcColourRgbList(
-            ((1.0, 1.0, 1.0), (0.47, 0.52, 0.47), (0.69, 0.59, 0.48))
-        )
+        colours = ifc_file.createIfcColourRgbList(((1.0, 1.0, 1.0), (0.47, 0.52, 0.47), (0.69, 0.59, 0.48)))
         ifc_file.createIfcIndexedColourMap(
             face_set,
             1.0,
             colours,
             (1, 2, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1),
         )
-        representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (face_set,)
-        )
+        representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
         wall = ifc_file.createIfcWall(
             ifcopenshell.guid.new(),
             None,
@@ -368,9 +348,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (2, 3, 7, 6),
             )
         )
-        opening_face_set = ifc_file.createIfcPolygonalFaceSet(
-            opening_points, True, opening_faces, None
-        )
+        opening_face_set = ifc_file.createIfcPolygonalFaceSet(opening_points, True, opening_faces, None)
         opening_representation = ifc_file.createIfcShapeRepresentation(
             context, "Body", "Tessellation", (opening_face_set,)
         )
@@ -381,15 +359,11 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
             None,
             None,
             ifc_file.createIfcLocalPlacement(placement, axis),
-            ifc_file.createIfcProductDefinitionShape(
-                None, None, (opening_representation,)
-            ),
+            ifc_file.createIfcProductDefinitionShape(None, None, (opening_representation,)),
             None,
             None,
         )
-        ifc_file.createIfcRelVoidsElement(
-            ifcopenshell.guid.new(), None, None, None, wall, opening
-        )
+        ifc_file.createIfcRelVoidsElement(ifcopenshell.guid.new(), None, None, None, wall, opening)
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
@@ -405,14 +379,10 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
 
     def test_indexed_colours_follow_triangulated_faces(self):
         ifc_file = ifcopenshell.file(schema="IFC4")
-        project = ifc_file.createIfcProject(
-            ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None
-        )
+        project = ifc_file.createIfcProject(ifcopenshell.guid.new(), None, "Test", None, None, None, None, None, None)
         origin = ifc_file.createIfcCartesianPoint((0.0, 0.0, 0.0))
         axis = ifc_file.createIfcAxis2Placement3D(origin, None, None)
-        context = ifc_file.createIfcGeometricRepresentationContext(
-            None, "Model", 3, 1e-5, axis, None
-        )
+        context = ifc_file.createIfcGeometricRepresentationContext(None, "Model", 3, 1e-5, axis, None)
         project.RepresentationContexts = [context]
 
         points = ifc_file.createIfcCartesianPointList3D(
@@ -423,16 +393,10 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (1.0, 1.0, 0.0),
             )
         )
-        face_set = ifc_file.createIfcTriangulatedFaceSet(
-            points, None, False, ((1, 2, 3), (2, 4, 3)), None
-        )
-        colours = ifc_file.createIfcColourRgbList(
-            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
-        )
+        face_set = ifc_file.createIfcTriangulatedFaceSet(points, None, False, ((1, 2, 3), (2, 4, 3)), None)
+        colours = ifc_file.createIfcColourRgbList(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
         ifc_file.createIfcIndexedColourMap(face_set, 0.6, colours, (1, 2))
-        representation = ifc_file.createIfcShapeRepresentation(
-            context, "Body", "Tessellation", (face_set,)
-        )
+        representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
 
         settings = ifcopenshell.geom.settings()
         settings.set("apply-default-materials", False)
@@ -440,10 +404,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
 
         material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(shape)
         materials = ifcopenshell.util.shape.get_material_colors(shape)
-        face_colours = [
-            tuple(round(float(channel), 6) for channel in materials[index])
-            for index in material_ids
-        ]
+        face_colours = [tuple(round(float(channel), 6) for channel in materials[index]) for index in material_ids]
 
         assert face_colours == [(1.0, 0.0, 0.0, 0.6), (0.0, 1.0, 0.0, 0.6)]
 
@@ -468,9 +429,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                 (13.825, 2.96),
                 (13.825, 0.0),
             )
-            points = ifc_file.createIfcCartesianPointList3D(
-                tuple((x, y, z) for y in (0.2, 0.0) for x, z in profile)
-            )
+            points = ifc_file.createIfcCartesianPointList3D(tuple((x, y, z) for y in (0.2, 0.0) for x, z in profile))
             face_indices = (
                 (1, 2, 3, 4, 5, 6, 7, 8),
                 (2, 1, 9, 10),
@@ -495,9 +454,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
                     colours,
                     (1, 2, 2, 2, 1, 1, 1, 1, 1, 1),
                 )
-            representation = ifc_file.createIfcShapeRepresentation(
-                context, "Body", "Tessellation", (face_set,)
-            )
+            representation = ifc_file.createIfcShapeRepresentation(context, "Body", "Tessellation", (face_set,))
             settings = ifcopenshell.geom.settings()
             settings.set("apply-default-materials", False)
             return ifcopenshell.geom.create_shape(settings, representation)
@@ -507,8 +464,7 @@ class TestTriangulationAttributes(test.bootstrap.IFC4):
             return sorted(
                 tuple(
                     sorted(
-                        tuple(round(float(channel), 9) for channel in vertices[vertex_index])
-                        for vertex_index in face
+                        tuple(round(float(channel), 9) for channel in vertices[vertex_index]) for vertex_index in face
                     )
                 )
                 for face in ifcopenshell.util.shape.get_faces(shape)
@@ -744,6 +700,328 @@ def test_logging():
     assert ("GEO089", "Non-positive extrusion height encountered for:") in [
         (msg.code, msg.message) for msg in new_items
     ]
+
+
+class TestSectionedSolidHorizontalRakedEndCut(test.bootstrap.IFC4X3):
+    """An IfcSectionedSolidHorizontal whose two IfcAxis2PlacementLinear cross
+    section positions use direction vectors inconsistently -- one raked
+    RefDirection + width scale, the other plain -- must still loft a uniform
+    prism (raked at one end, square at the other), not a wedge, and must not
+    log GEO 42."""
+
+    def _build_wingwall(self, theta):
+        f = self.file
+        ifcopenshell.api.root.create_entity(f, ifc_class="IfcProject", name="Test")
+        ctx = ifcopenshell.api.context.add_context(f, context_type="Model")
+        body = ifcopenshell.api.context.add_context(
+            f, context_type="Model", context_identifier="Body", target_view="MODEL_VIEW", parent=ctx
+        )
+
+        self.L, self.w, self.h = 40.0, 20.0 / 12.0, 6.0
+        width_scale = 1.0 / math.cos(theta)
+
+        directrix = f.createIfcPolyline(
+            Points=[f.createIfcCartesianPoint((0.0, 0.0, 0.0)), f.createIfcCartesianPoint((self.L, 0.0, 0.0))]
+        )
+
+        def rect(half_width):
+            coords = (
+                (-half_width, 0.0),
+                (half_width, 0.0),
+                (half_width, self.h),
+                (-half_width, self.h),
+                (-half_width, 0.0),
+            )
+            return f.createIfcArbitraryClosedProfileDef(
+                ProfileType="AREA",
+                OuterCurve=f.createIfcIndexedPolyCurve(
+                    Points=f.createIfcCartesianPointList2D(coords), Segments=None, SelfIntersect=False
+                ),
+            )
+
+        axis = f.createIfcDirection((0.0, 0.0, 1.0))
+        # Rakes the near end cap about the vertical axis by theta while keeping
+        # the section's width axis (Axis x RefDirection) perpendicular extent at w.
+        ref_direction = f.createIfcDirection((math.cos(theta), -math.sin(theta), 0.0))
+
+        def location(distance_along):
+            return f.createIfcPointByDistanceExpression(
+                DistanceAlong=f.createIfcLengthMeasure(distance_along), BasisCurve=directrix
+            )
+
+        near = f.createIfcAxis2PlacementLinear(Location=location(0.0), Axis=axis, RefDirection=ref_direction)
+        far = f.createIfcAxis2PlacementLinear(Location=location(self.L), Axis=axis)
+
+        solid = f.createIfcSectionedSolidHorizontal(
+            Directrix=directrix,
+            CrossSections=[rect(0.5 * self.w * width_scale), rect(0.5 * self.w)],
+            CrossSectionPositions=[near, far],
+        )
+        return f.createIfcShapeRepresentation(
+            ContextOfItems=body,
+            RepresentationIdentifier="Body",
+            RepresentationType="AdvancedSweptSolid",
+            Items=[solid],
+        )
+
+    @pytest.mark.skipif(
+        not ifcopenshell.geom.has_geometry_library("opencascade"), reason="requires the OpenCASCADE kernel"
+    )
+    def test_raked_end_keeps_uniform_perpendicular_thickness(self):
+        theta = math.radians(25.0 + 22.0 / 60.0 + 58.0 / 3600.0)
+        representation = self._build_wingwall(theta)
+
+        logger = ifcopenshell.logger()
+        logger.output_format(logger.FMT_INMEMORY)
+        settings = ifcopenshell.geom.settings()
+        settings.set("use-world-coords", True)
+        geometry = ifcopenshell.geom.create_shape(settings, representation, logger=logger)
+
+        assert "GEO42" not in [msg.code for msg in logger]
+
+        v = ifcopenshell.util.shape.get_vertices(geometry)
+        xs = v[:, 0]
+
+        # Uniform thickness perpendicular to the (X aligned) directrix. The whole
+        # solid spans exactly w in Y; a wedge (the pre fix behaviour) does not.
+        assert np.ptp(v[:, 1]) == pytest.approx(self.w, abs=1e-4)
+        for x0 in np.linspace(3.0, self.L - 3.0, 12):
+            slab = v[np.abs(xs - x0) < 1.0]
+            if len(slab) < 4:
+                continue
+            assert np.ptp(slab[:, 1]) == pytest.approx(self.w, abs=1e-4), f"thickness at x={x0:.1f}"
+
+        # Far end square to the directrix (all vertices at x == L), near end raked
+        # about the vertical axis by exactly theta (its extreme vertex sits at
+        # -w/2 * tan(theta) along the directrix).
+        assert xs.max() == pytest.approx(self.L, abs=1e-4)
+        assert np.ptp(v[xs > xs.max() - 1e-4][:, 0]) < 1e-4
+        assert xs.min() == pytest.approx(-0.5 * self.w * math.tan(theta), abs=1e-4)
+
+
+class TestSectionedSolidHorizontalHonoursAxis(test.bootstrap.IFC4X3):
+    """An IfcSectionedSolidHorizontal whose cross section placements carry an
+    explicit Axis = (0,0,1) but no RefDirection must sweep the profile with its
+    Y axis on that Axis and its normal on the directrix tangent (buildingSMART
+    IFC4.x-IF #147) -- i.e. following the curve. Regression test for the case
+    where the directrix does not run along the global X axis: the profile used
+    to be placed with a fixed [e_y | e_z | e_x] permutation that ignored the
+    directrix, collapsing the swept solid (a road pavement running north-south
+    would come out a sliver a few centimetres wide)."""
+
+    def _build(self, theta=0.0):
+        f = self.file
+        ifcopenshell.api.root.create_entity(f, ifc_class="IfcProject", name="Test")
+        ctx = ifcopenshell.api.context.add_context(f, context_type="Model")
+        body = ifcopenshell.api.context.add_context(
+            f, context_type="Model", context_identifier="Body", target_view="MODEL_VIEW", parent=ctx
+        )
+
+        self.L, self.width, self.height = 60.0, 12.0, 0.5
+
+        # Directrix runs along +Y, not +X.
+        directrix = f.createIfcPolyline(
+            Points=[f.createIfcCartesianPoint((0.0, 0.0, 0.0)), f.createIfcCartesianPoint((0.0, self.L, 0.0))]
+        )
+
+        def rect(half_width):
+            coords = (
+                (-half_width, 0.0),
+                (half_width, 0.0),
+                (half_width, self.height),
+                (-half_width, self.height),
+                (-half_width, 0.0),
+            )
+            return f.createIfcArbitraryClosedProfileDef(
+                ProfileType="AREA",
+                OuterCurve=f.createIfcIndexedPolyCurve(
+                    Points=f.createIfcCartesianPointList2D(coords), Segments=None, SelfIntersect=False
+                ),
+            )
+
+        axis = f.createIfcDirection((0.0, 0.0, 1.0))
+
+        def location(distance_along):
+            return f.createIfcPointByDistanceExpression(
+                DistanceAlong=f.createIfcLengthMeasure(distance_along), BasisCurve=directrix
+            )
+
+        near = f.createIfcAxis2PlacementLinear(Location=location(0.0), Axis=axis)
+        if theta:
+            # Directrix tangent is +Y; rake the far cap about the vertical Axis.
+            ref_direction = f.createIfcDirection((math.sin(theta), math.cos(theta), 0.0))
+            far = f.createIfcAxis2PlacementLinear(Location=location(self.L), Axis=axis, RefDirection=ref_direction)
+            far_half = 0.5 * self.width / math.cos(theta)
+        else:
+            far = f.createIfcAxis2PlacementLinear(Location=location(self.L), Axis=axis)
+            far_half = 0.5 * self.width
+
+        solid = f.createIfcSectionedSolidHorizontal(
+            Directrix=directrix,
+            CrossSections=[rect(0.5 * self.width), rect(far_half)],
+            CrossSectionPositions=[near, far],
+        )
+        return f.createIfcShapeRepresentation(
+            ContextOfItems=body,
+            RepresentationIdentifier="Body",
+            RepresentationType="AdvancedSweptSolid",
+            Items=[solid],
+        )
+
+    def _shape(self, representation):
+        logger = ifcopenshell.logger()
+        logger.output_format(logger.FMT_INMEMORY)
+        settings = ifcopenshell.geom.settings()
+        settings.set("use-world-coords", True)
+        geometry = ifcopenshell.geom.create_shape(settings, representation, logger=logger)
+        assert "GEO42" not in [msg.code for msg in logger]
+        return ifcopenshell.util.shape.get_vertices(geometry)
+
+    @pytest.mark.skipif(
+        not ifcopenshell.geom.has_geometry_library("opencascade"), reason="requires the OpenCASCADE kernel"
+    )
+    def test_square_run_follows_the_directrix(self):
+        v = self._shape(self._build())
+        # width across the road -> world X, crown -> world Z, length -> world Y.
+        assert np.ptp(v[:, 0]) == pytest.approx(self.width, abs=1e-4)
+        assert np.ptp(v[:, 1]) == pytest.approx(self.L, abs=1e-4)
+        assert np.ptp(v[:, 2]) == pytest.approx(self.height, abs=1e-4)
+
+    @pytest.mark.skipif(
+        not ifcopenshell.geom.has_geometry_library("opencascade"), reason="requires the OpenCASCADE kernel"
+    )
+    def test_raked_far_end_on_a_non_axis_aligned_directrix(self):
+        theta = math.radians(25.0 + 22.0 / 60.0 + 58.0 / 3600.0)
+        v = self._shape(self._build(theta))
+        ys = v[:, 1]
+        # Uniform width perpendicular to the directrix, square near end, raked far end.
+        assert np.ptp(v[:, 0]) == pytest.approx(self.width, abs=1e-4)
+        for y0 in np.linspace(5.0, self.L - 5.0, 10):
+            slab = v[np.abs(ys - y0) < 1.0]
+            if len(slab) >= 4:
+                assert np.ptp(slab[:, 0]) == pytest.approx(self.width, abs=1e-4), f"width at y={y0:.1f}"
+        assert ys.min() == pytest.approx(0.0, abs=1e-4)
+        assert np.ptp(v[ys < ys.min() + 1e-4][:, 1]) < 1e-4
+        assert ys.max() == pytest.approx(self.L + 0.5 * self.width * math.tan(theta), abs=1e-4)
+
+
+class TestSectionedSolidHorizontalOffsetUnits(test.bootstrap.IFC4X3):
+    """IfcPointByDistanceExpression.OffsetLateral / OffsetVertical are
+    IfcLengthMeasure and must be scaled by the model length unit, exactly like
+    DistanceAlong. Regression test: in a millimetre model a 3000 mm lateral
+    offset must move the swept solid 3 m, not 3000 m."""
+
+    @pytest.mark.skipif(
+        not ifcopenshell.geom.has_geometry_library("opencascade"), reason="requires the OpenCASCADE kernel"
+    )
+    def test_lateral_offset_is_scaled_by_the_length_unit(self):
+        f = self.file
+        ifcopenshell.api.root.create_entity(f, ifc_class="IfcProject", name="Test")
+        unit = ifcopenshell.api.unit.add_si_unit(f, unit_type="LENGTHUNIT", prefix="MILLI")
+        ifcopenshell.api.unit.assign_unit(f, units=[unit])
+        ctx = ifcopenshell.api.context.add_context(f, context_type="Model")
+        body = ifcopenshell.api.context.add_context(
+            f, context_type="Model", context_identifier="Body", target_view="MODEL_VIEW", parent=ctx
+        )
+
+        length_mm, width_mm, offset_mm = 20000.0, 4000.0, 3000.0
+        directrix = f.createIfcPolyline(
+            Points=[f.createIfcCartesianPoint((0.0, 0.0, 0.0)), f.createIfcCartesianPoint((length_mm, 0.0, 0.0))]
+        )
+        hw = 0.5 * width_mm
+        profile = f.createIfcArbitraryClosedProfileDef(
+            ProfileType="AREA",
+            OuterCurve=f.createIfcIndexedPolyCurve(
+                Points=f.createIfcCartesianPointList2D(((-hw, 0.0), (hw, 0.0), (hw, 500.0), (-hw, 500.0), (-hw, 0.0))),
+                Segments=None,
+                SelfIntersect=False,
+            ),
+        )
+        axis = f.createIfcDirection((0.0, 0.0, 1.0))
+
+        def position(distance_along):
+            return f.createIfcAxis2PlacementLinear(
+                Location=f.createIfcPointByDistanceExpression(
+                    DistanceAlong=f.createIfcLengthMeasure(distance_along),
+                    OffsetLateral=offset_mm,
+                    BasisCurve=directrix,
+                ),
+                Axis=axis,
+            )
+
+        solid = f.createIfcSectionedSolidHorizontal(
+            Directrix=directrix,
+            CrossSections=[profile, profile],
+            CrossSectionPositions=[position(0.0), position(length_mm)],
+        )
+        representation = f.createIfcShapeRepresentation(
+            ContextOfItems=body,
+            RepresentationIdentifier="Body",
+            RepresentationType="AdvancedSweptSolid",
+            Items=[solid],
+        )
+
+        settings = ifcopenshell.geom.settings()
+        settings.set("use-world-coords", True)
+        geometry = ifcopenshell.geom.create_shape(settings, representation)
+        v = ifcopenshell.util.shape.get_vertices(geometry)  # metres
+
+        # Directrix +X, Axis +Z -> profile local x is world +Y; +OffsetLateral shifts there.
+        assert np.ptp(v[:, 0]) == pytest.approx(length_mm / 1000.0, abs=1e-4)
+        assert np.ptp(v[:, 1]) == pytest.approx(width_mm / 1000.0, abs=1e-4)
+        assert v[:, 1].mean() == pytest.approx(offset_mm / 1000.0, abs=1e-3)
+
+
+@pytest.mark.skipif(not ifcopenshell.geom.has_geometry_library("opencascade"), reason="requires the OpenCASCADE kernel")
+@pytest.mark.parametrize("representation", ["IfcFacetedBrep", "IfcPolygonalFaceSet"])
+@pytest.mark.parametrize("duplicate", ["none", "same_face", "distinct_face", "reversed_face"])
+def test_coincident_face_loops_retain_one_surface(representation, duplicate):
+    f = ifcopenshell.file(schema="IFC4")
+    coordinates = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 0.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (0.0, 1.0, 1.0),
+    ]
+    indices = [(1, 4, 3, 2), (1, 2, 6, 5), (2, 3, 7, 6), (3, 4, 8, 7), (4, 1, 5, 8), (5, 6, 7, 8)]
+    if representation == "IfcFacetedBrep":
+        points = [f.createIfcCartesianPoint(p) for p in coordinates]
+
+        def make_face(loop):
+            return f.createIfcFace(
+                [f.createIfcFaceOuterBound(f.createIfcPolyLoop([points[i - 1] for i in loop]), True)]
+            )
+    else:
+        points = f.createIfcCartesianPointList3D(coordinates)
+
+        def make_face(loop):
+            return f.createIfcIndexedPolygonalFace(loop)
+
+    faces = [make_face(loop) for loop in indices]
+    if duplicate == "same_face":
+        faces.append(faces[-1])
+    elif duplicate == "distinct_face":
+        faces.append(make_face(indices[-1]))
+    elif duplicate == "reversed_face":
+        faces.append(make_face(tuple(reversed(indices[-1]))))
+
+    if representation == "IfcFacetedBrep":
+        item = f.createIfcFacetedBrep(f.createIfcClosedShell(faces))
+    else:
+        item = f.createIfcPolygonalFaceSet(Coordinates=points, Closed=True, Faces=faces)
+
+    geometry = ifcopenshell.geom.create_shape(ifcopenshell.geom.settings(), item, geometry_library="opencascade")
+    vertices = ifcopenshell.util.shape.get_vertices(geometry)
+    triangles = ifcopenshell.util.shape.get_faces(geometry)
+    assert len(vertices) == 8
+    assert len(triangles) == 12
+    assert vertices.min(axis=0) == pytest.approx((0.0, 0.0, 0.0))
+    assert vertices.max(axis=0) == pytest.approx((1.0, 1.0, 1.0))
+    assert ifcopenshell.util.shape.get_volume(geometry) == pytest.approx(1.0)
 
 
 if __name__ == "__main__":
