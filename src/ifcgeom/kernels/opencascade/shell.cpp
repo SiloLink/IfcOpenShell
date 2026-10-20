@@ -170,13 +170,12 @@ bool open_cascade_kernel::convert_impl(const taxonomy::shell::ptr shell, std::ve
 	if (!convert(shell, shape, &face_styles)) {
 		return false;
 	}
-	results.emplace_back(conversion_result(
-		shell->instance.id(),
-		shell->matrix,
-		new open_cascade_shape(shape, std::move(face_styles)),
-		shell->surface_style
-	));
-	return true;
+    results.emplace_back(conversion_result(
+        shell->instance.id(),
+        shell->matrix,
+        new open_cascade_shape(shape, std::move(face_styles), shell->closed),
+        shell->surface_style));
+    return true;
 
 	});
 }

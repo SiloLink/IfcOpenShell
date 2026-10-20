@@ -170,7 +170,10 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 		TopoDS_Shape combined_result;
 		std::vector<taxonomy::style::ptr> combined_face_styles;
 		const auto& complete_shape = *std::static_pointer_cast<open_cascade_shape>(it3->shape());
-		face_style_sources complete_face_styles;
+        // Open surface models do not enclose a volume. Keep their source faces as
+        // the first operand unless volume reconstruction was explicitly requested.
+        const bool as_surface = complete_shape.source_closed() == false && !settings_.get<settings::MakeVolume>().get();
+        face_style_sources complete_face_styles;
 		if (!capture_face_styles(
 				complete_shape.shape(), complete_shape.face_styles(), complete_face_styles)) {
 			logger_.error("Opening subtraction face styles do not match source faces", entity);
@@ -210,8 +213,8 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 
 			bool is_manifold = util::is_manifold(entity_part);
 
-			if (!is_manifold && complete_shape.face_styles().empty()) {
-				// Sewing may replace source faces, so only use it when no per-face style provenance must survive.
+            if (!as_surface && !is_manifold && complete_shape.face_styles().empty()) {
+                // Sewing may replace source faces, so only use it when no per-face style provenance must survive.
 				// force sewing, edge identity might have been mudied by FixAdvFace.FixOrientation.MSG5 to fix interior loop winding order
                 NCollection_List<TopoDS_Shape> list;
                 ifcopenshell::geom::util::shape_to_face_list(entity_part, list);
@@ -225,9 +228,9 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
                 if (is_manifold) {
 					logger_.warning("GEO", 188, "Successfully sewed non-manifold first operand");
                 }
-			}
+            }
 
-			if (!is_manifold) {
+            if (!as_surface && !is_manifold) {
                 if (settings_.get<settings::MakeVolume>().get()) {
                     BOPAlgo_MakerVolume mv;
                     mv.AddArgument(entity_part);
@@ -258,13 +261,13 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
                 } else {
                     logger_.warning("GEO", 191, "Non-manifold first operand, use --make-volume to try and make manifold");
 				}
-			}
+            }
 
-			TopoDS_Shape entity_part_result;
+            TopoDS_Shape entity_part_result;
 			std::vector<taxonomy::style::ptr> entity_part_result_styles;
 
-			for (int as_shell = 0; as_shell < 2; ++as_shell) {
-				face_style_sources entity_part_face_styles;
+            for (int as_shell = as_surface ? 1 : 0; as_shell < 2; ++as_shell) {
+                face_style_sources entity_part_face_styles;
 				if (!capture_face_styles(entity_part, entity_part_styles, entity_part_face_styles)) {
 					logger_.error("Opening subtraction face styles do not match prepared source faces", entity);
 					return false;
@@ -360,9 +363,9 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 				// For manifold first operands we're not even going to try if processing
 				// as loose faces gives a better result.
 				break;
-			}
+            }
 
-			if (is_multiple) {
+            if (is_multiple) {
 				B.Add(C, entity_part_result);
 				combined_face_styles.insert(
 					combined_face_styles.end(), entity_part_result_styles.begin(), entity_part_result_styles.end());
@@ -382,11 +385,11 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 			logger_.error("Opening subtraction face styles do not match result faces", entity);
 			return false;
 		}
-		cut_shapes.push_back(ifcopenshell::geom::conversion_result(
-			it3->ItemId(),
-			new open_cascade_shape(combined_result, std::move(combined_face_styles)),
-			it3->style_ptr()));
-	}
+        cut_shapes.push_back(ifcopenshell::geom::conversion_result(
+            it3->ItemId(),
+            new open_cascade_shape(combined_result, std::move(combined_face_styles), complete_shape.source_closed()),
+            it3->style_ptr()));
+    }
 	return true;
 }
 
