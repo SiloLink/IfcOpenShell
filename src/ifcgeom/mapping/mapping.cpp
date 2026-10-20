@@ -136,6 +136,10 @@ bool mapping::reuse_ok_(const std::vector<IfcSchema::IfcProduct>& products) {
         return false;
     }
 
+    if (!settings_.get<settings::DisableOpeningSubtractions>().get() && std::any_of(products.begin(), products.end(), [this](const auto& product) { return !find_openings(product).empty(); })) {
+        return false;
+    }
+
     if (products.size() == 1) {
         return true;
     }
@@ -143,10 +147,6 @@ bool mapping::reuse_ok_(const std::vector<IfcSchema::IfcProduct>& products) {
     std::set<std::optional<express::base>> associated_single_materials;
 
     for (auto& product : products) {
-        if (!settings_.get<settings::DisableOpeningSubtractions>().get() && !find_openings(product).empty()) {
-            return false;
-        }
-
         if (settings_.get<settings::ApplyLayerSets>().get()) {
             std::vector<IfcSchema::IfcRelAssociates> associations = product.HasAssociations();
             for (auto& assoc : associations) {

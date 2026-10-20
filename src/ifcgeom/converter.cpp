@@ -175,59 +175,58 @@ ifcopenshell::geom::native_element* ifcopenshell::geom::converter::create_brep_f
 			representation_id_builder << "-" << op.id();
 		}
 
-		std::vector<ifcopenshell::geom::conversion_result> opened_shapes;
-		bool caught_error = false;
-		try {
-			std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> opening_items;
+        std::vector<ifcopenshell::geom::conversion_result> opened_shapes;
+        try {
+            std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> opening_items;
 
-			std::transform(openings.begin(), openings.end(), std::back_inserter(opening_items), [this](express::base opening) {
-				auto prod_item = mapping()->map(opening);
-				auto repr = mapping()->representation_of(opening);
-				if (repr) {
-					return std::make_pair(mapping()->map(repr), *taxonomy::cast<taxonomy::geom_item>(prod_item)->matrix);
-				} else {
-					return std::make_pair(taxonomy::ptr{}, taxonomy::matrix4{});
-				}
-			});
+            std::transform(openings.begin(), openings.end(), std::back_inserter(opening_items), [this](express::base opening) {
+                auto prod_item = mapping()->map(opening);
+                auto repr = mapping()->representation_of(opening);
+                if (repr) {
+                    return std::make_pair(mapping()->map(repr), *taxonomy::cast<taxonomy::geom_item>(prod_item)->matrix);
+                } else {
+                    return std::make_pair(taxonomy::ptr{}, taxonomy::matrix4{});
+                }
+            });
 
-			opening_items.erase(
-				std::remove_if(
-					opening_items.begin(),
-					opening_items.end(),
-					[](const std::pair<taxonomy::ptr, taxonomy::matrix4>& p) { return !p.first; }
-			), opening_items.end());
+            opening_items.erase(
+                std::remove_if(
+                    opening_items.begin(),
+                    opening_items.end(),
+                    [](const std::pair<taxonomy::ptr, taxonomy::matrix4>& p) { return !p.first; }),
+                opening_items.end());
 
-			if (opening_items.empty()) {
-				opened_shapes = shapes;
-			} else {
-				kernel_->convert_openings(product, opening_items, shapes, *place, opened_shapes);
-			}
-		} catch (const std::exception& e) {
-			logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 33, std::string("Error processing openings for: ") + e.what() + ":", product);
-			caught_error = true;
-		} catch (...) {
-			logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 34, "Error processing openings for:", product);
-		}
+            if (opening_items.empty()) {
+                opened_shapes = shapes;
+            } else if (!kernel_->convert_openings(product, opening_items, shapes, *place, opened_shapes)) {
+                logger_.error("Opening subtraction failed", product);
+                return nullptr;
+            }
+        } catch (const std::exception& e) {
+            logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 33, std::string("Error processing openings for: ") + e.what() + ":", product);
+            return nullptr;
+        } catch (...) {
+            logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 34, "Error processing openings for:", product);
+            return nullptr;
+        }
 
-		if (!(caught_error && opened_shapes.size() < shapes.size())) {
-			if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
-				for (auto it = opened_shapes.begin(); it != opened_shapes.end(); ++it) {
-					it->prepend(place);
-				}
-				place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
-				representation_id_builder << "-world-coords";
-			}
-			shapes = opened_shapes;
-		}
-	} else if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
-		for (auto it = shapes.begin(); it != shapes.end(); ++it) {
+        if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
+            for (auto it = opened_shapes.begin(); it != opened_shapes.end(); ++it) {
+                it->prepend(place);
+            }
+            place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
+            representation_id_builder << "-world-coords";
+        }
+        shapes = opened_shapes;
+    } else if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
+        for (auto it = shapes.begin(); it != shapes.end(); ++it) {
 			it->prepend(place);
 		}
 		place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
 		representation_id_builder << "-world-coords";
-	}
+    }
 
-	if (settings_.get<ifcopenshell::geom::settings::UnifyShapes>().get()) {
+    if (settings_.get<ifcopenshell::geom::settings::UnifyShapes>().get()) {
 		std::vector<ifcopenshell::geom::conversion_result> unified_shapes;
 		try {
 			if (kernel_->unify_shapes(shapes, unified_shapes)) {
