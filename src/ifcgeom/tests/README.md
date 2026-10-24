@@ -23,8 +23,10 @@ same plugin directory variable and name filter.
 ordinary CGAL. It uses actual box, open-shell, collection and nested Boolean
 conversion to check that complete opening conversion rejects a missing cutter
 or operand without publishing partial output. A valid nested `A-B` cutter
-retains the expected host volume; partial-mode controls preserve the existing
-policy. The hybrid check verifies complete conversion and policy restoration
+retains the expected host volume. The complete-cutter contract now lives in
+`abstract_kernel::convert_openings`, so a kernel called directly in partial
+mode rejects an incomplete cutter too and restores the caller's mode on every
+exit. The hybrid check verifies complete conversion and policy restoration
 across repeated calls, including after a partial conversion with caching
 enabled. Complete conversions remain reusable from the cache. It uses the same
 plugin directory variable and filter.

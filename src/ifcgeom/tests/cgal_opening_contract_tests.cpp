@@ -1,5 +1,6 @@
 // Complete opening cutters must retain every Boolean operand, including
 // operands whose ordinary CGAL conversion fails after producing geometry.
+// The contract holds for direct kernel calls in either conversion mode.
 #include "ifcgeom/hybrid_kernel.h"
 #include "ifcgeom/kernels/cgal/cgal_kernel.h"
 #include "ifcparse/file.h"
@@ -115,14 +116,11 @@ void cut_contract(bool partial, bool open_shell, bool collection) {
     const auto input = host(*file);
     std::vector<conversion_result> output;
     const bool success = kernel.convert_openings(file->instance_by_id(102), openings, input, taxonomy::matrix4(), output);
-    require(success == partial, "incomplete opening cutter was accepted in complete mode or partial behavior changed");
-    if (partial) {
-        // CGAL expands cutters using the configured precision; this bound only
-        // distinguishes a unit cut from a missing cut, not a new tolerance.
-        require(std::abs(volume(output) - 63.) < 0.001, "partial opening did not retain the valid cut");
-    } else {
-        require(output.empty(), "failed opening published partial output");
-    }
+    // The complete-cutter contract applies to a kernel used directly, whatever
+    // conversion mode the caller runs in; the mode itself is restored.
+    require(!success, "incomplete opening cutter was accepted by a direct kernel call");
+    require(output.empty(), "failed opening published partial output");
+    require(kernel.partial_success_is_success == partial, "convert_openings did not restore the caller's conversion mode");
     require(std::abs(volume(input) - 64.) < 1.e-8, "opening mutated its input host");
 }
 
@@ -141,13 +139,10 @@ void nested_cutter_contract(bool partial, bool open_shell) {
     kernel.partial_success_is_success = partial;
     auto cutter = difference(*file, failed_solid(*file, open_shell));
     std::vector<conversion_result> output;
-    require(kernel.convert_openings(file->instance_by_id(102), {{cutter, taxonomy::matrix4()}}, host(*file), taxonomy::matrix4(), output) == partial,
+    require(!kernel.convert_openings(file->instance_by_id(102), {{cutter, taxonomy::matrix4()}}, host(*file), taxonomy::matrix4(), output),
             "nested A-B lost B but was accepted as a complete cutting body");
-    if (partial) {
-        require(std::abs(volume(output) - 56.) < 0.001, "legacy partial nested Boolean behavior changed");
-    } else {
-        require(output.empty(), "failed nested cutting body published output");
-    }
+    require(output.empty(), "failed nested cutting body published output");
+    require(kernel.partial_success_is_success == partial, "convert_openings did not restore the caller's conversion mode");
 }
 
 void complete_nested_cutter() {

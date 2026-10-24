@@ -89,7 +89,7 @@ class ControlledKernel : public abstract_kernel {
         const std::map<express::base, layerset_information>&) override {
         return run();
     }
-    bool convert_openings(
+    bool convert_openings_impl(
         const express::base&,
         const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>&,
         const std::vector<conversion_result>&,
@@ -485,7 +485,7 @@ void opening_partial_contract(bool complete_batch, bool all_fail, bool throws, b
             output.emplace_back(item->instance.id(), new open_cascade_shape(BRepPrimAPI_MakeBox(4., 4., 4.).Shape()));
             return true;
         }
-        bool convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>& ops, const std::vector<conversion_result>& input, const taxonomy::matrix4&, std::vector<conversion_result>& output) override {
+        bool convert_openings_impl(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>& ops, const std::vector<conversion_result>& input, const taxonomy::matrix4&, std::vector<conversion_result>& output) override {
             ++cuts_;
             const bool success = complete_batch_ || (all_recover_ && ops.size() == 1) || (!all_fail_ && cuts_ == 2);
             const double side = success ? (complete_batch_ ? 2. : 3.) : 100.;

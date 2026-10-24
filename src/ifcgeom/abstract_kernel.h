@@ -71,6 +71,21 @@ namespace ifcopenshell {
 		bool propagate_exceptions = false;
 		bool partial_success_is_success = true;
 
+		/// Sets the conversion mode for one scope and restores the previous
+		/// mode on every exit, including exceptions.
+		class conversion_mode_scope {
+			abstract_kernel& kernel_;
+			bool saved_;
+		public:
+			conversion_mode_scope(abstract_kernel& kernel, bool partial_success_is_success)
+				: kernel_(kernel), saved_(kernel.partial_success_is_success) {
+				kernel_.partial_success_is_success = partial_success_is_success;
+			}
+			~conversion_mode_scope() { kernel_.partial_success_is_success = saved_; }
+			conversion_mode_scope(const conversion_mode_scope&) = delete;
+			conversion_mode_scope& operator=(const conversion_mode_scope&) = delete;
+		};
+
 		abstract_kernel(const std::string& geometry_library, const ifcopenshell::geom::settings& settings, ifcopenshell::logger& logger = ifcopenshell::logger::root())
 			: geometry_library_(geometry_library)
 			, settings_(settings)
@@ -139,7 +154,15 @@ namespace ifcopenshell {
 
 		virtual bool apply_layerset(std::vector<ifcopenshell::geom::conversion_result>&, const ifcopenshell::geom::layerset_information&) { throw not_implemented_error(); }
 		virtual bool apply_folded_layerset(std::vector<ifcopenshell::geom::conversion_result>&, const ifcopenshell::geom::layerset_information&, const std::map<express::base, ifcopenshell::geom::layerset_information>&) { throw not_implemented_error(); }
-		virtual bool convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
+		/// Cuts every opening out of the entity shapes under one contract for the
+		/// hybrid dispatcher and for a kernel used directly: each cutter is
+		/// converted completely, because a partial cutter can remove more of the
+		/// host than the authored opening, and every published result has a
+		/// shape. Backends implement convert_openings_impl with their own cutter
+		/// representation; the caller's conversion mode is restored on every exit.
+		bool convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
+			const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes);
+		virtual bool convert_openings_impl(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
 			const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) = 0;
 		virtual bool unify_shapes(const std::vector<ifcopenshell::geom::conversion_result>&, std::vector<ifcopenshell::geom::conversion_result>&) { throw not_implemented_error(); }
 

@@ -154,8 +154,7 @@ namespace ifcopenshell {
                     };
                     auto attempt = [&](abstract_kernel& k, bool allow_partial) {
                         k.apply_settings(settings_);
-                        const bool partial_success = k.partial_success_is_success;
-                        k.partial_success_is_success = allow_partial;
+                        conversion_mode_scope mode(k, allow_partial);
                         bool success = false;
                         std::vector<ifcopenshell::geom::conversion_result> results;
                         try {
@@ -165,7 +164,6 @@ namespace ifcopenshell {
                         } catch (...) {
                             logger_.message(ifcopenshell::logger::LOG_NOTICE, "Geometry attempt exception; backend=" + k.geometry_library(), item->instance);
                         }
-                        k.partial_success_is_success = partial_success;
 
                         if (success && has_face_styles && !preserves_face_styles(results, 0, face_styles)) {
                             if (material_fallback.empty() && std::all_of(results.begin(), results.end(), [&](const auto& r) {
@@ -266,7 +264,7 @@ namespace ifcopenshell {
 					}
 					return false;
 				}
-                virtual bool convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings, const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
+                virtual bool convert_openings_impl(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings, const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
                     std::vector<conversion_result> material_fallback;
                     size_t failed_attempts = 0;
                     std::string opening_ids;
@@ -289,11 +287,9 @@ namespace ifcopenshell {
                         }
                         bool success = false;
                         k->apply_settings(settings_);
-                        // A partial cutter can be larger than its complete Boolean
-                        // result. Try every backend with complete conversion only;
-                        // the converter can skip a whole failed opening afterwards.
-                        const bool partial_success = k->partial_success_is_success;
-                        k->partial_success_is_success = false;
+                        // Each backend applies the complete-cutter contract in
+                        // convert_openings; the converter can skip a whole failed
+                        // opening afterwards.
                         try {
                             std::vector<ifcopenshell::geom::conversion_result> candidate;
                             success = k->convert_openings(entity, openings, entity_shapes, entity_trsf, candidate);
@@ -321,7 +317,6 @@ namespace ifcopenshell {
                             logger_.notice("Opening attempt exception; backend=" + k->geometry_library(), entity);
                             success = false;
                         }
-                        k->partial_success_is_success = partial_success;
                         if (success) {
                             if (failed_attempts) {
                                 logger_.notice("Opening fallback; outcome=recovered backend=" + k->geometry_library() + " failed_attempts=" + std::to_string(failed_attempts), entity);
