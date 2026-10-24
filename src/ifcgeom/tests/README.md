@@ -14,7 +14,9 @@ containing those plugins. An optional argument filters test names.
 Boolean crash-safety contracts: the healing context rejects cyclic ShapeFix
 replacements, by value and by containment and with location mode on, while
 shared sub-shapes, finite location changes and long replacement chains still
-heal. It takes the same plugin directory variable and name filter.
+heal; a Boolean whose first or second operand fails to convert returns failure
+without emitting the partial geometry. It takes the same plugin directory
+variable and name filter.
 
 The cold serialization test runs before any file is constructed. Eight callers
 serialize entities and entity references concurrently, exercising the first-use

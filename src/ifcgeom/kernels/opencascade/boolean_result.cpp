@@ -54,13 +54,15 @@ bool open_cascade_kernel::convert_impl(const taxonomy::boolean_result::ptr br, s
 
 	taxonomy::style::ptr first_item_style;
 
-	for (auto& c : br->children) {
-		std::vector<ifcopenshell::geom::conversion_result> cr;
-		abstract_kernel::convert(c, cr);
-		if (first && br->operation == taxonomy::boolean_result::SUBTRACTION) {
-			// @todo A will be null on union/intersection, intended?
-			ifcopenshell::geom::util::flatten_shape_list(cr, a, false, true, settings_.get<settings::Precision>().get());
-			first_item_style = c->surface_style;
+    for (auto& c : br->children) {
+        std::vector<ifcopenshell::geom::conversion_result> cr;
+        if (!abstract_kernel::convert(c, cr)) {
+            return false;
+        }
+        if (first && br->operation == taxonomy::boolean_result::SUBTRACTION) {
+            // @todo A will be null on union/intersection, intended?
+            ifcopenshell::geom::util::flatten_shape_list(cr, a, false, true, settings_.get<settings::Precision>().get());
+            first_item_style = c->surface_style;
 			if (!first_item_style && c->kind() == taxonomy::COLLECTION) {
 				// @todo recursively right?
 				first_item_style = taxonomy::cast<taxonomy::geom_item>(taxonomy::cast<taxonomy::collection>(c)->children[0])->surface_style;
@@ -80,9 +82,9 @@ bool open_cascade_kernel::convert_impl(const taxonomy::boolean_result::ptr br, s
 			if (first_operand_volume <= ALMOST_ZERO) {
 				logger_.message(ifcopenshell::logger::LOG_WARNING, "GEO", 119, "Empty solid for:", c->instance);
 			}
-		} else {
+        } else {
 
-			for (auto& r : cr) {
+            for (auto& r : cr) {
 				auto S = std::static_pointer_cast<open_cascade_shape>(r.shape())->shape();
 				if (S.IsNull()) {
 					logger_.error("GEO", 120, "Null operand");
@@ -111,11 +113,11 @@ bool open_cascade_kernel::convert_impl(const taxonomy::boolean_result::ptr br, s
 
 				b.Append(S);
 			}
-		}
-		first = false;
-	}
+        }
+        first = false;
+    }
 
-	util::boolean_settings bst;
+    util::boolean_settings bst;
 	bst.attempt_2d = settings_.get<settings::BooleanAttempt2d>().get();
 	bst.debug = settings_.get<settings::DebugBooleanOperations>().get();
 	bst.precision = settings_.get<settings::Precision>().get();
