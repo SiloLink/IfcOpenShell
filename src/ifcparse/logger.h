@@ -35,6 +35,8 @@
 
 namespace ifcopenshell {
 
+using diagnostic_fields = std::map<std::string, std::string>;
+
 class IFC_PARSE_API log_message {
   public:
     char code[7];
@@ -91,7 +93,7 @@ class IFC_PARSE_API logger {
 
     const express::base& current_product() const;
     void current_product(const express::base& product);
-    void message(severity type, const std::string& code, const std::string& message, const express::base& instance);
+    void message(severity type, const std::string& code, const std::string& message, const express::base& instance, bool include_product = true);
 
   public:
     logger() = default;
@@ -114,6 +116,7 @@ class IFC_PARSE_API logger {
     format output_format() const;
 
     void message(severity type, const std::string& message, const express::base& instance = express::base());
+    void diagnostic(severity type, const diagnostic_fields& fields);
     void message(severity type, const std::exception& exception, const express::base& instance = express::base());
     void message(severity type, const char (&code_prefix)[4], uint16_t code_number, const std::string& message, const express::base& instance = express::base());
     void message(severity type, const char (&code_prefix)[4], uint16_t code_number, const std::exception& exception, const express::base& instance = express::base());

@@ -34,6 +34,22 @@
 
 using ifcopenshell::logger;
 
+void logger::diagnostic(severity type, const diagnostic_fields& fields) {
+    boost::property_tree::ptree event;
+    for (const auto& field : fields) {
+        event.put(field.first, field.second);
+    }
+    std::ostringstream encoded;
+    boost::property_tree::write_json(encoded, event, false);
+    auto text = encoded.str();
+    if (!text.empty() && text.back() == '\n') {
+        text.pop_back();
+    }
+    // Machine events must not depend on an unescaped, user-authored GlobalId
+    // in the human-readable prefix. STEP identities are in the JSON payload.
+    message(type, std::string(), "PARSER_EVENT_V1 " + text, express::base(), false);
+}
+
 namespace {
 
 std::string get_time(bool with_milliseconds = false) {
@@ -232,7 +248,7 @@ void logger::message(logger::severity type, const char (&code_prefix)[4], uint16
     message(type, code_prefix, code_number, std::string(exception.what()), instance);
 }
 
-void logger::message(logger::severity type, const std::string& code, const std::string& text, const express::base& instance) {
+void logger::message(logger::severity type, const std::string& code, const std::string& text, const express::base& instance, bool include_product) {
     if (type < verbosity_) {
         return;
     }
@@ -256,20 +272,21 @@ void logger::message(logger::severity type, const std::string& code, const std::
         max_severity_ = type;
     }
 
+    const auto product = include_product ? current_product() : express::base();
     if (format_ == FMT_INMEMORY) {
-        log_messages_.emplace_back(type, code, get_time(), text, instance, current_product());
+        log_messages_.emplace_back(type, code, get_time(), text, instance, product);
     } else if (((log2_ != nullptr) || (wlog2_ != nullptr))) {
         if (format_ == FMT_PLAIN) {
             if (log2_ != nullptr) {
-                plain_text_message(*log2_, current_product(), type, code, text, instance);
+                plain_text_message(*log2_, product, type, code, text, instance);
             } else if (wlog2_ != nullptr) {
-                plain_text_message(*wlog2_, current_product(), type, code, text, instance);
+                plain_text_message(*wlog2_, product, type, code, text, instance);
             }
         } else if (format_ == FMT_JSON) {
             if (log2_ != nullptr) {
-                json_message(*log2_, current_product(), type, code, text, instance);
+                json_message(*log2_, product, type, code, text, instance);
             } else if (wlog2_ != nullptr) {
-                json_message(*wlog2_, current_product(), type, code, text, instance);
+                json_message(*wlog2_, product, type, code, text, instance);
             }
         }
     }

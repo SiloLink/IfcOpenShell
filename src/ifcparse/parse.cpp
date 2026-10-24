@@ -2234,6 +2234,91 @@ class instance_header_consumer {
     std::optional<size_t> rewind_;
 };
 
+// Use the SPF tokenizer to ignore layout/comments without rounding numbers,
+// decoding strings, or changing references. Only repeated definitions are scanned
+// again; the normal path retains one source offset per entity.
+template <typename Reader>
+struct definition_consumer {
+    static constexpr bool decode_strings = false;
+    static constexpr bool decode_values = false;
+    static constexpr bool keep_keywords = true;
+    Reader& reader;
+    std::vector<std::string> tokens;
+    int depth = 0;
+    bool closed = false;
+    bool done = false;
+    size_t semicolon = 0;
+
+    bool operator_(size_t pos, char c) {
+        if (closed) {
+            done = c == ';';
+            semicolon = pos;
+            return false;
+        }
+        if (c == ';') {
+            return false;
+        }
+        if (c == '(') {
+            ++depth;
+        } else if (c == ')') {
+            if (depth == 0) {
+                return false;
+            }
+            closed = --depth == 0;
+        }
+        tokens.emplace_back(1, c);
+        return true;
+    }
+    bool string(size_t begin, size_t end) { return token(begin, end, false); }
+    bool identifier(size_t pos, uint32_t) { return literal(pos); }
+    bool keyword(size_t, const std::string& text) {
+        if (closed) {
+            return false;
+        }
+        std::string normalized = text;
+        for (char& c : normalized) {
+            if (c >= 'a' && c <= 'z') {
+                c -= 'a' - 'A';
+            }
+        }
+        tokens.push_back(std::move(normalized));
+        return true;
+    }
+    bool literal(size_t pos) { return token(pos, reader.tell(), true); }
+    bool token(size_t begin, size_t end, bool strip_layout) {
+        if (closed) {
+            return false;
+        }
+        std::string value;
+        for (size_t i = begin; i < end; ++i) {
+            const char c = reader.get(i);
+            if (!strip_layout || (c != ' ' && c != '\r' && c != '\n' && c != '\t')) {
+                value.push_back(c);
+            }
+        }
+        tokens.push_back(std::move(value));
+        return true;
+    }
+};
+
+template <typename Reader>
+bool same_definition(Reader& reader, size_t begin, size_t original, ifcopenshell::logger& log) {
+    spf_lexer<Reader> lexer(&reader, log);
+    reader.seek(original);
+    definition_consumer<Reader> first{reader};
+    lexer.scan(first);
+    lexer.reset_pool();
+    reader.seek(begin);
+    definition_consumer<Reader> second{reader};
+    lexer.scan(second);
+    if (!first.done || !second.done || first.tokens != second.tokens) {
+        return false;
+    }
+    // The enclosing header consumer still owns the terminating semicolon.
+    reader.seek(second.semicolon);
+    return true;
+}
+
 template <typename Reader, typename Bypassed, typename Visit>
 void for_each_instance_header(Reader&, spf_lexer<Reader>& lexer, size_t end, const ifcopenshell::schema_definition* schema, const Bypassed& bypassed_types, std::vector<unsigned>& bypassed, ifcopenshell::logger& log, Visit visit) {
     instance_header_consumer<Bypassed, Visit> consumer(end, schema, bypassed_types, bypassed, log, visit);
@@ -2513,43 +2598,71 @@ std::optional<std::tuple<size_t, const ifcopenshell::declaration*, shared_pointe
         return return_value;
     }
 
-    if (good_ && lexer_ && stream_ && !lexer_->stream->eof()) {
-        auto visit = [&](uint32_t name, const ifcopenshell::declaration* entity_type, size_t) {
-            try {
-                auto data = storage_.load(lexer_.get(), name, entity_type, entity_type->as_entity(), -1, coerce_attribute_count);
-
-                if (((++progress_) % 1000) == 0) {
-                    std::stringstream ss;
-                    ss << "\r#" << name;
-                    logger_.get().status(ss.str(), false);
+    bool redundant;
+    do {
+        redundant = false;
+        std::optional<uint32_t> conflicting_id;
+        if (good_ && lexer_ && stream_ && !lexer_->stream->eof()) {
+            auto visit = [&](uint32_t name, const ifcopenshell::declaration* entity_type, size_t definition_begin) {
+                if (coalesce_duplicate_ids) {
+                    auto prior = definition_offsets_.find(name);
+                    if (prior != definition_offsets_.end()) {
+                        if (!same_definition(*stream_, definition_begin, prior->second, logger_.get())) {
+                            conflicting_id = name;
+                            return false;
+                        }
+                        redundant = true;
+                        ++redundant_definitions_;
+                        logger_.get().diagnostic(ifcopenshell::logger::LOG_WARNING,
+                                                 {{"category", "step_deduplicated"}, {"stage", "open"}, {"entity_id", std::to_string(name)}, {"detail_id", std::to_string(definition_begin)}, {"reason", "identical_definition"}, {"action", "coalesce"}, {"outcome", "recovered"}});
+                        logger_.get().message(ifcopenshell::logger::LOG_WARNING,
+                                              "STEP duplicate #" + std::to_string(name) + ": identical definition coalesced; retained original entity (count=" + std::to_string(redundant_definitions_) + ")");
+                        return true;
+                    }
                 }
+                try {
+                    auto data = storage_.load(lexer_.get(), name, entity_type, entity_type->as_entity(), -1, coerce_attribute_count);
+                    if (coalesce_duplicate_ids) {
+                        definition_offsets_.emplace(name, definition_begin);
+                    }
 
-                return_value.emplace((size_t)name, entity_type, data);
-                return true;  // on to the ';' after the list, then stop
+                    if (((++progress_) % 1000) == 0) {
+                        std::stringstream ss;
+                        ss << "\r#" << name;
+                        logger_.get().status(ss.str(), false);
+                    }
+
+                    return_value.emplace((size_t)name, entity_type, data);
+                    return true; // on to the ';' after the list, then stop
+                } catch (const invalid_token_exception& e) {
+                    good_ = file_open_status::INVALID_SYNTAX;
+                    logger_.get().error(e);
+                }
+                return false;
+            };
+            try {
+                instance_header_consumer<std::vector<bool>, decltype(visit)> consumer(stream_->size(), schema_, types_to_bypass_materialized_, bypassed_instances_, logger_.get(), visit);
+                consumer.one_instance(true);
+                lexer_->scan(consumer);
+                if (consumer.rewind()) {
+                    stream_->seek(*consumer.rewind());
+                }
             } catch (const invalid_token_exception& e) {
                 good_ = file_open_status::INVALID_SYNTAX;
                 logger_.get().error(e);
+            } catch (const exception& e) {
+                good_ = file_open_status::INVALID_SYNTAX;
+                logger_.get().message(ifcopenshell::logger::LOG_ERROR, std::string(e.what()) + ". Parsing terminated");
+            } catch (...) {
+                good_ = file_open_status::INVALID_SYNTAX;
+                logger_.get().message(ifcopenshell::logger::LOG_ERROR, "Parsing terminated");
             }
-            return false;
-        };
-        try {
-            instance_header_consumer<std::vector<bool>, decltype(visit)> consumer(stream_->size(), schema_, types_to_bypass_materialized_, bypassed_instances_, logger_.get(), visit);
-            consumer.one_instance(true);
-            lexer_->scan(consumer);
-            if (consumer.rewind()) {
-                stream_->seek(*consumer.rewind());
-            }
-        } catch (const invalid_token_exception& e) {
-            good_ = file_open_status::INVALID_SYNTAX;
-            logger_.get().error(e);
-        } catch (const exception& e) {
-            good_ = file_open_status::INVALID_SYNTAX;
-            logger_.get().message(ifcopenshell::logger::LOG_ERROR, std::string(e.what()) + ". Parsing terminated");
-        } catch (...) {
-            good_ = file_open_status::INVALID_SYNTAX;
-            logger_.get().message(ifcopenshell::logger::LOG_ERROR, "Parsing terminated");
         }
-    }
+
+        if (conflicting_id) {
+            throw exception("Duplicate STEP instance id #" + std::to_string(*conflicting_id) + ": conflicting definitions");
+        }
+    } while (redundant && good_ && !stream_->eof());
 
     stream_->drop_pages();
     lexer_->reset_pool();
@@ -2821,10 +2934,21 @@ bool ifcopenshell::impl::in_memory_file_storage::index_lazily(const std::string&
     // full.
     const char* failure = nullptr;
     size_t failure_offset = 0;
+    std::unordered_map<uint32_t, size_t> definition_offsets;
+    size_t redundant_definitions = 0;
     try {
-        for_each_instance_header(reader, lexer, reader.size(), schema, bypassed_types, lazy_bypassed_, logger_.get(), [&](uint32_t name, const ifcopenshell::declaration* declaration, size_t) {
-            if (byid_.find(name) != byid_.end()) {
-                throw exception("Duplicate STEP instance id #" + std::to_string(name));
+        for_each_instance_header(reader, lexer, reader.size(), schema, bypassed_types, lazy_bypassed_, logger_.get(), [&](uint32_t name, const ifcopenshell::declaration* declaration, size_t definition_begin) {
+            auto prior = definition_offsets.find(name);
+            if (prior != definition_offsets.end()) {
+                if (!same_definition(reader, definition_begin, prior->second, logger_.get())) {
+                    throw exception("Duplicate STEP instance id #" + std::to_string(name) + ": conflicting definitions");
+                }
+                ++redundant_definitions;
+                logger_.get().diagnostic(ifcopenshell::logger::LOG_WARNING,
+                                         {{"category", "step_deduplicated"}, {"stage", "open"}, {"entity_id", std::to_string(name)}, {"detail_id", std::to_string(definition_begin)}, {"reason", "identical_definition"}, {"action", "coalesce"}, {"outcome", "recovered"}});
+                logger_.get().message(ifcopenshell::logger::LOG_WARNING,
+                                      "STEP duplicate #" + std::to_string(name) + ": identical definition coalesced; retained original entity (count=" + std::to_string(redundant_definitions) + ")");
+                return true;
             }
             const uint64_t attributes_offset = reader.tell();
             attribute_consumer consumer{byref_excl_, name, (uint16_t)declaration->index_in_schema()};
@@ -2840,6 +2964,7 @@ bool ifcopenshell::impl::in_memory_file_storage::index_lazily(const std::string&
                 failure_offset = attributes_offset;
                 return false;
             }
+            definition_offsets.emplace(name, definition_begin);
             const size_t guid_begin = consumer.guid_begin, guid_end = consumer.guid_end;
             auto data = ifcopenshell::make_pointer_type<instance_data>(file, declaration, name, instance_data::lazy_tag{});
             byid_.insert({name, data});
@@ -2930,6 +3055,7 @@ void ifcopenshell::impl::in_memory_file_storage::read_from_stream(Reader* s, con
     auto ifcroot_type_ = schema->declaration_by_name("IfcRoot");
     streamer.bypass_types(typed_to_bypass);
     streamer.resolve_references_in_place(true);
+    streamer.coalesce_duplicate_ids = true;
 
     logger_.get().status("Scanning file...");
 
