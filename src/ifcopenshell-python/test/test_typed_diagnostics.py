@@ -1,8 +1,6 @@
 # This file was generated with the assistance of an AI coding tool.
 """Typed diagnostics and capabilities come from the loaded binary, not from parsed log text."""
 
-import json
-
 import pytest
 
 import ifcopenshell
