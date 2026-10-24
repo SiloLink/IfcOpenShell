@@ -10,6 +10,12 @@ schema and mapping plugins from the configured build. When running outside the
 installed plugin directory, set `IFCGEOM_CONTRACT_PLUGIN_DIR` to the directory
 containing those plugins. An optional argument filters test names.
 
+`ifcgeom_boolean_contract_tests` (also non-default) covers the OpenCASCADE
+Boolean crash-safety contracts: the healing context rejects cyclic ShapeFix
+replacements, by value and by containment and with location mode on, while
+shared sub-shapes, finite location changes and long replacement chains still
+heal. It takes the same plugin directory variable and name filter.
+
 The cold serialization test runs before any file is constructed. Eight callers
 serialize entities and entity references concurrently, exercising the first-use
 path used by worker logs. Header entities and typed values retain their STEP
