@@ -1209,6 +1209,9 @@ public:
 		ifcopenshell_log_stream.str("");
 		return log;
 	}
+	const char* silolink_capabilities() {
+		return SILOLINK_CAPABILITIES;
+	}
 	void turn_on_detailed_logging() {
 		ifcopenshell::logger::root().set_output(&std::cout, &std::cout);
 		ifcopenshell::logger::root().verbosity(ifcopenshell::logger::LOG_DEBUG);

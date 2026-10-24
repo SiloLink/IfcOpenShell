@@ -35,3 +35,11 @@ IFC_PARSE_API const char *IFCOPENSHELL_VERSION = STRINGIFY(IFCOPENSHELL_BRANCH) 
 // Set from CMake's RELEASE_VERSION (the repository VERSION file).
 IFC_PARSE_API const char *IFCOPENSHELL_VERSION = STRINGIFY(IFCOPENSHELL_VERSION_STRING);
 #endif
+
+// Each name corresponds to one behaviour the SiloLink Parser or its acceptance
+// suite relies on. Add a name when the behaviour ships; never remove one while
+// a consumer may require it.
+IFC_PARSE_API const char *SILOLINK_CAPABILITIES =
+    "[\"step_definition_coalescing\",\"open_error_gil_restored\","
+    "\"structured_diagnostics\",\"typed_diagnostics\",\"complete_opening_cutters\","
+    "\"partial_geometry_recovery\",\"mapped_occurrence_openings\",\"iterator_logger_retained\"]";

@@ -45,6 +45,11 @@
 
 
 extern IFC_PARSE_API const char *IFCOPENSHELL_VERSION;
+// JSON array naming the SiloLink native behaviours this binary provides. A
+// consumer reads it from the loaded binary before opening any file, so a
+// mismatched runtime is reported instead of probed with behaviour that may
+// crash.
+extern IFC_PARSE_API const char *SILOLINK_CAPABILITIES;
 
 namespace ifcopenshell {
 
