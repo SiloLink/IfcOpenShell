@@ -55,8 +55,10 @@ bool ifcopenshell::geom::kernels::abstract_kernel::convert(const taxonomy::ptr i
 		res = with_exception_handling(process_with_upgrade);
 	}
 
-	if (settings_.get<settings::CacheShapes>().get() && res) {
-		cache_.insert({ item, results });
+	// A partial conversion may omit Boolean operands. Such a result cannot
+	// satisfy a later complete conversion of the same taxonomy item.
+	if (settings_.get<settings::CacheShapes>().get() && res && !partial_success_is_success) {
+		cache_.insert({item, results});
 	}
 
 	return res;

@@ -952,7 +952,11 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 		opening_trsf = relative;
 
 		std::vector<conversion_result> opening_shapes;
-		abstract_kernel::convert(op.first, opening_shapes);
+		const bool converted = abstract_kernel::convert(op.first, opening_shapes);
+		if (!partial_success_is_success && (!converted || opening_shapes.empty())) {
+			logger().notice("Opening cutter conversion incomplete; action=reject_complete_cutter", op.first->instance);
+			return false;
+		}
 
 		for (unsigned int i = 0; i < opening_shapes.size(); ++i) {
 			cgal_polyhedron entity_shape_unlocated = *std::static_pointer_cast<cgal_shape>(opening_shapes[i].shape());
@@ -969,6 +973,9 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 			}
 			CGAL::Nef_polyhedron_3<kernel_> nef;
 			if (!preprocess_boolean_operand(op.first->instance, {}, {}, {}, entity_shape, nef, PP_NONE)) {
+				if (!partial_success_is_success) {
+					return false;
+				}
 				continue;
 			}
 
@@ -981,6 +988,9 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 	for (auto& nef : second_operands_nef) {
 		auto& inst = *iit++;
 		if (!dilate_boolean_operand(inst, nef)) {
+			if (!partial_success_is_success) {
+				return false;
+			}
 			continue;
 		}
 		check_nef_conversion(inst, nef);
@@ -993,6 +1003,7 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 	}
 
 	auto opening_union = second_operand_collector.get_union();
+	std::vector<conversion_result> candidate;
 
 	auto it = entity_shapes.begin();
 	auto nit = first_operands_nef.begin();
@@ -1016,11 +1027,12 @@ bool ifcopenshell::geom::kernels::cgal_kernel::convert_openings(const express::b
 			return false;
 		}
 
-		cut_shapes.push_back(ifcopenshell::geom::conversion_result(it->ItemId(), new cgal_shape(a_poly), it->style_ptr()));
+		candidate.push_back(ifcopenshell::geom::conversion_result(it->ItemId(), new cgal_shape(a_poly), it->style_ptr()));
 		it++;
 		nit++;
 	}
 
+	cut_shapes.insert(cut_shapes.end(), candidate.begin(), candidate.end());
 	return true;
 #endif
 }
@@ -1929,7 +1941,8 @@ bool cgal_kernel::convert_impl(const taxonomy::boolean_result::ptr br, std::vect
 			decompositor(polygon_with_holes, std::back_inserter(decom_polies));
 		}
 
-		std::transform(decom_polies.begin(), decom_polies.end(), std::back_inserter(results), [this, &br, &z0, &z1, &first_item_style](const CGAL::Polygon_2<kernel_>& p2) {
+		std::vector<conversion_result> candidate;
+		for (const auto& p2 : decom_polies) {
 			cgal_face f;
 			std::transform(
 				p2.vertices_begin(),
@@ -1942,20 +1955,22 @@ bool cgal_kernel::convert_impl(const taxonomy::boolean_result::ptr br, std::vect
 
 			cgal_polyhedron shp;
 			auto d = taxonomy::make<taxonomy::direction3>(0, 0, 1);
-			process_extrusion(f, d, z1 - z0, shp);
+			if (!process_extrusion(f, d, z1 - z0, shp) && !partial_success_is_success) {
+				return false;
+			}
 
 			for (auto it = shp.vertices_begin(); it != shp.vertices_end(); ++it) {
 				auto p = it->point();
 				it->point() = cgal_point(p.cartesian(0), p.cartesian(1), p.cartesian(2) + z0);
 			}
 
-			return conversion_result(
+			candidate.emplace_back(
 				br->instance.id(),
 				br->matrix,
 				new cgal_shape(shp),
-				br->surface_style ? br->surface_style : first_item_style
-			);
-		});
+				br->surface_style ? br->surface_style : first_item_style);
+		}
+		results.insert(results.end(), candidate.begin(), candidate.end());
 
 		logger().notice("GEO", 102, "Processed boolean operation as 2d arrangement");
 
@@ -2044,13 +2059,18 @@ bool cgal_kernel::convert_impl(const taxonomy::boolean_result::ptr br, std::vect
 				}
 				if (!ps.is_simple()) {
                     logger().warning("GEO", 103, "Polygonal boundary not simple", face->children[0]->instance);
+					if (!partial_success_is_success) {
+						return false;
+					}
 					continue;
 				}
 
 				// static
 				auto z = taxonomy::make<taxonomy::direction3>(0, 0, 1);
 				cgal_polyhedron poly;
-				process_extrusion(fs.front(), z, 200, poly);
+				if (!process_extrusion(fs.front(), z, 200, poly) && !partial_success_is_success) {
+					return false;
+				}
 				for (auto& v : vertices(poly)) {
 					v->point() = kernel_::Point_3(
 						v->point().cartesian(0),
@@ -2076,7 +2096,11 @@ bool cgal_kernel::convert_impl(const taxonomy::boolean_result::ptr br, std::vect
 			continue;
 		}
 
-		abstract_kernel::convert(c, cr);
+		const bool converted = abstract_kernel::convert(c, cr);
+		if (!partial_success_is_success && (!converted || cr.empty())) {
+			logger().notice("Boolean operand conversion incomplete; action=reject_complete_boolean", c->instance);
+			return false;
+		}
 
 		if (first && br->operation == taxonomy::boolean_result::SUBTRACTION) {
 			first_item_style = c->surface_style;
@@ -2153,6 +2177,9 @@ bool cgal_kernel::convert_impl(const taxonomy::boolean_result::ptr br, std::vect
 			if (!preprocess_boolean_operand(entity_instance, ops, nefops, all_operand_planes, entity_shape, nef,
 				// Snap boolean subtraction operands
 				first ? PP_NONE : PP_MINKOWSKY_DILATE/*PP_SNAP_PLANES_TO_FIRST_OPERAND*/)) {
+				if (!partial_success_is_success) {
+					return false;
+				}
 				continue;
 			}
 
