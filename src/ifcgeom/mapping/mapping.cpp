@@ -241,7 +241,7 @@ void mapping::get_representations(std::vector<geometry_conversion_task>& tasks, 
         addRepresentationsFromDefaultContexts(representations);
     }
 
-    std::vector<IfcSchema::IfcRepresentation> ok_mapped_representations;
+    std::map<express::base, bool> reusable_representations;
 
     int task_index = 0;
 
@@ -256,6 +256,7 @@ void mapping::get_representations(std::vector<geometry_conversion_task>& tasks, 
         }
 
         auto geometry_reuse_ok_for_current_representation_ = reuse_ok_(ifcproducts);
+        reusable_representations[representation] = geometry_reuse_ok_for_current_representation_;
         if (!geometry_reuse_ok_for_current_representation_ && rmap) {
             not_reusable_maps_.insert(rmap);
         }
@@ -263,35 +264,15 @@ void mapping::get_representations(std::vector<geometry_conversion_task>& tasks, 
         std::vector<IfcSchema::IfcRepresentationMap> maps = representation.RepresentationMap();
 
         if (!geometry_reuse_ok_for_current_representation_ && maps.size() == 1) {
-            // unfiltered_products contains products represented by this representation by means of mapped items.
-            // For example because of openings applied to products, reuse might not be acceptable and then the
-            // products will be processed by means of their immediate representation and not the mapped representation.
-
-            // IfcRepresentationMaps are also used for IfcTypeProducts, so an additional check is performed whether the map
-            // is indeed used by IfcMappedItems.
+            // Mapped occurrences need their own conversion context, but direct
+            // owners of the source must still receive a task.
             auto& map = maps.front();
             if (map.MapUsage().size() > 0) {
-                continue;
+                ifcproducts = filter_products(products_represented_by(representation, rmap, true), filters);
+                if (ifcproducts.empty()) {
+                    continue;
+                }
             }
-        }
-
-        // Check if this representation has (or will be) processed as part its mapped representation
-        bool representation_processed_as_mapped_item = false;
-        auto representation_mapped_to_result = representation_mapped_to(representation);
-        if (representation_mapped_to_result) {
-            IfcSchema::IfcRepresentationMap mapped_rmap;
-            auto mapped_ifcproducts = filter_products(
-                products_represented_by(representation_mapped_to_result, mapped_rmap),
-                filters
-            );
-            representation_processed_as_mapped_item = geometry_reuse_ok_for_current_representation_ && (
-                std::find(ok_mapped_representations.begin(), ok_mapped_representations.end(), representation_mapped_to_result) != ok_mapped_representations.end() ||
-                reuse_ok_(mapped_ifcproducts));
-        }
-
-        if (representation_processed_as_mapped_item) {
-            ok_mapped_representations.push_back(representation_mapped_to_result);
-            continue;
         }
 
         if (!geometry_reuse_ok_for_current_representation_ && ifcproducts.size() > 1) {
@@ -330,6 +311,50 @@ void mapping::get_representations(std::vector<geometry_conversion_task>& tasks, 
             tasks.emplace_back(task);
         }
     }
+
+    // Reuse is valid only when a scheduled source task covers every occurrence.
+    // A representation can have several maps, or be excluded by context/product
+    // filters, so its reusability alone does not establish task coverage.
+    std::map<express::base, std::vector<size_t>> tasks_by_representation;
+    std::vector<std::set<express::base>> task_products;
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        tasks_by_representation[tasks[i].representation].push_back(i);
+        task_products.emplace_back(tasks[i].products.begin(), tasks[i].products.end());
+    }
+    std::vector<bool> redundant(tasks.size(), false);
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        const auto& task = tasks[i];
+        if (!reusable_representations[task.representation]) {
+            continue;
+        }
+        auto source = representation_mapped_to(task.representation.as<IfcSchema::IfcRepresentation>());
+        if (!source || source == task.representation || !reusable_representations[source]) {
+            continue;
+        }
+        auto found = tasks_by_representation.find(source);
+        if (found == tasks_by_representation.end()) {
+            continue;
+        }
+        for (auto source_index : found->second) {
+            if (!redundant[source_index] &&
+                std::includes(task_products[source_index].begin(), task_products[source_index].end(),
+                              task_products[i].begin(), task_products[i].end())) {
+                redundant[i] = true;
+                break;
+            }
+        }
+    }
+    size_t retained = 0;
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        if (!redundant[i]) {
+            if (retained != i) {
+                tasks[retained] = std::move(tasks[i]);
+            }
+            tasks[retained].index = static_cast<int>(retained);
+            ++retained;
+        }
+    }
+    tasks.resize(retained);
 }
 
 const express::base mapping::get_product_type(const express::base& product_) {
