@@ -2823,6 +2823,9 @@ bool ifcopenshell::impl::in_memory_file_storage::index_lazily(const std::string&
     size_t failure_offset = 0;
     try {
         for_each_instance_header(reader, lexer, reader.size(), schema, bypassed_types, lazy_bypassed_, logger_.get(), [&](uint32_t name, const ifcopenshell::declaration* declaration, size_t) {
+            if (byid_.find(name) != byid_.end()) {
+                throw exception("Duplicate STEP instance id #" + std::to_string(name));
+            }
             const uint64_t attributes_offset = reader.tell();
             attribute_consumer consumer{byref_excl_, name, (uint16_t)declaration->index_in_schema()};
             lexer.scan(consumer);
@@ -2839,11 +2842,7 @@ bool ifcopenshell::impl::in_memory_file_storage::index_lazily(const std::string&
             }
             const size_t guid_begin = consumer.guid_begin, guid_end = consumer.guid_end;
             auto data = ifcopenshell::make_pointer_type<instance_data>(file, declaration, name, instance_data::lazy_tag{});
-            if (!byid_.insert({name, data}).second) {
-                logger_.get().message(ifcopenshell::logger::LOG_WARNING, "Overwriting instance with name #" + std::to_string(name));
-                byid_.erase(name);
-                byid_.insert({name, data});
-            }
+            byid_.insert({name, data});
             lazy_offsets_.push_back({name, attributes_offset});
             express::base instance(data);
             bytype_excl_[declaration].push_back(instance);
@@ -2945,6 +2944,12 @@ void ifcopenshell::impl::in_memory_file_storage::read_from_stream(Reader* s, con
         }
 
         auto current_id = std::get<0>(*inst);
+        // Reject ambiguous identity before publishing weak references in the
+        // type/GUID indices. Keeping the first record would leave references to
+        // the rejected record dangling and cannot resolve the author's intent.
+        if (byid_.find(current_id) != byid_.end()) {
+            throw exception("Duplicate STEP instance id #" + std::to_string(current_id));
+        }
         express::base instance(std::get<2>(*inst));
 
         if (instance.declaration().is(*ifcroot_type_)) {
@@ -2966,12 +2971,6 @@ void ifcopenshell::impl::in_memory_file_storage::read_from_stream(Reader* s, con
 
         const ifcopenshell::declaration* ty = &instance.declaration();
         bytype_excl_[ty].push_back(instance);
-
-        if (byid_.find(current_id) != byid_.end()) {
-            std::stringstream ss;
-            ss << "Overwriting instance with name #" << current_id;
-            logger_.get().message(ifcopenshell::logger::LOG_WARNING, ss.str());
-        }
 
         byid_.insert({(uint32_t)current_id, std::get<2>(*inst)});
         max_id = (std::max)(max_id, (unsigned int)current_id);
