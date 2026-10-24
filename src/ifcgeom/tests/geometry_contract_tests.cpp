@@ -410,7 +410,7 @@ class ControlledKernel : public kernels::abstract_kernel {
     }
     ~ControlledKernel() override { --control_->kernels; }
     bool supports_boolean_operations() const override { return false; }
-    bool convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>&, const std::vector<ifcopenshell::geom::conversion_result>&, const taxonomy::matrix4&, std::vector<ifcopenshell::geom::conversion_result>&) override {
+    bool convert_openings_impl(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>&, const std::vector<ifcopenshell::geom::conversion_result>&, const taxonomy::matrix4&, std::vector<ifcopenshell::geom::conversion_result>&) override {
         throw std::runtime_error("unexpected opening conversion");
     }
     abstract_kernel* clone(ifcopenshell::logger& logger) const override {
