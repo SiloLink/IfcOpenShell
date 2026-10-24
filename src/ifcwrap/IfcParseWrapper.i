@@ -1032,23 +1032,30 @@ from .entity_instance import entity_instance_mixin
 %newobject read;
 %newobject stream_from_string;
 
+%{
+namespace {
+class released_python_threads {
+    PyThreadState* state_;
+public:
+    released_python_threads() : state_(PyEval_SaveThread()) {}
+    ~released_python_threads() { PyEval_RestoreThread(state_); }
+    released_python_threads(const released_python_threads&) = delete;
+    released_python_threads& operator=(const released_python_threads&) = delete;
+};
+}
+%}
+
 %inline %{
 	ifcopenshell::file* open(const std::string& fn, bool readonly=false, ifcopenshell::logger* logger=nullptr) {
-		ifcopenshell::file* f;
-		Py_BEGIN_ALLOW_THREADS;
-		f = new ifcopenshell::file(fn, ifcopenshell::FT_AUTODETECT, readonly, ifcopenshell::logger_or_root(logger));
-		Py_END_ALLOW_THREADS;
-		return f;
+		released_python_threads threads;
+		return new ifcopenshell::file(fn, ifcopenshell::FT_AUTODETECT, readonly, ifcopenshell::logger_or_root(logger));
 	}
 
     ifcopenshell::file* read(const std::string& data) {
-		char* copiedData = new char[data.length()];
-		memcpy(copiedData, data.c_str(), data.length());
-		ifcopenshell::file* f;
-		Py_BEGIN_ALLOW_THREADS;
-		f = new ifcopenshell::file((void *)copiedData, data.length());
-		Py_END_ALLOW_THREADS;
-		return f;
+		released_python_threads threads;
+		// The file constructor copies this buffer into its reader; it does not
+		// take ownership. Keep the input string alive throughout construction.
+		return new ifcopenshell::file((void *)data.data(), data.length());
 	}
 
 	ifcopenshell::instance_streamer<ifcopenshell::file_reader<ifcopenshell::full_buffer_impl>>* stream_from_string(const std::string& data) {
