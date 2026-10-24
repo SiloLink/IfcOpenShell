@@ -107,6 +107,21 @@ capabilities: frozenset[str] = frozenset(
 )
 
 
+def diagnostic_contract() -> dict[str, list[str]]:
+    """The diagnostic category and outcome names this native runtime emits."""
+    return json.loads(ifcopenshell_wrapper.diagnostic_contract())
+
+
+def collect_diagnostics(enabled: bool) -> None:
+    """Keep typed diagnostic events for take_diagnostics() in addition to the text log."""
+    ifcopenshell_wrapper.collect_diagnostics(enabled)
+
+
+def take_diagnostics() -> list[dict[str, str]]:
+    """Hand over the typed diagnostic events recorded since the last call."""
+    return json.loads(ifcopenshell_wrapper.take_diagnostics())
+
+
 logger = ifcopenshell_wrapper.logger if hasattr(ifcopenshell_wrapper, "logger") else None
 if hasattr(ifcopenshell_wrapper, "logger_or_root"):
     logger_or_root = ifcopenshell_wrapper.logger_or_root

@@ -37,6 +37,15 @@ namespace ifcopenshell {
 
 using diagnostic_fields = std::map<std::string, std::string>;
 
+/// The diagnostic vocabulary shared with the SiloLink Parser. Every event names
+/// one category and one outcome from these lists; the Parser compares its own
+/// table against diagnostic_contract_json() so the two sides cannot drift.
+IFC_PARSE_API const std::vector<std::string>& diagnostic_categories();
+IFC_PARSE_API const std::vector<std::string>& diagnostic_outcomes();
+IFC_PARSE_API std::string diagnostic_contract_json();
+/// A JSON array of objects, one per event, with the same escaping as the text envelope.
+IFC_PARSE_API std::string encode_diagnostics_json(const std::vector<diagnostic_fields>& events);
+
 class IFC_PARSE_API log_message {
   public:
     char code[7];
@@ -89,6 +98,8 @@ class IFC_PARSE_API logger {
     std::map<std::string, double> performance_signal_start_;
 
     bool print_perf_stats_on_element_ = false;
+    std::vector<diagnostic_fields> diagnostics_;
+    bool collect_diagnostics_ = false;
     std::mutex mutex_;
 
     const express::base& current_product() const;
@@ -117,6 +128,12 @@ class IFC_PARSE_API logger {
 
     void message(severity type, const std::string& message, const express::base& instance = express::base());
     void diagnostic(severity type, const diagnostic_fields& fields);
+    /// Typed sink: while enabled, every diagnostic() is also kept as structured
+    /// fields, independent of verbosity and text format, until take_diagnostics()
+    /// hands them over. append() moves a worker logger's events into this one.
+    void collect_diagnostics(bool enabled);
+    bool collects_diagnostics() const { return collect_diagnostics_; }
+    std::vector<diagnostic_fields> take_diagnostics();
     void message(severity type, const std::exception& exception, const express::base& instance = express::base());
     void message(severity type, const char (&code_prefix)[4], uint16_t code_number, const std::string& message, const express::base& instance = express::base());
     void message(severity type, const char (&code_prefix)[4], uint16_t code_number, const std::exception& exception, const express::base& instance = express::base());

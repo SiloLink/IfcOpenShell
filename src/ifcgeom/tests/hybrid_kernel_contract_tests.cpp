@@ -569,8 +569,10 @@ void concurrent_diagnostic_events() {
     for (int worker = 0; worker < 4; ++worker) {
         workers.emplace_back([&, worker]() {
             for (int i = 0; i < 20; ++i) {
+                // A complete event: the logger reports anything outside the shared
+                // category/outcome contract on its own line.
                 logger.diagnostic(ifcopenshell::logger::LOG_WARNING,
-                                  {{"category", "geometry_partial"}, {"entity_id", std::to_string(worker * 20 + i)}, {"reason", "quoted \"reason\"\nsecond line"}});
+                                  {{"category", "geometry_partial"}, {"outcome", "partial"}, {"entity_id", std::to_string(worker * 20 + i)}, {"reason", "quoted \"reason\"\nsecond line"}});
             }
         });
     }

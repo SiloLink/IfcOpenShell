@@ -1212,6 +1212,15 @@ public:
 	const char* silolink_capabilities() {
 		return SILOLINK_CAPABILITIES;
 	}
+	std::string diagnostic_contract() {
+		return ifcopenshell::diagnostic_contract_json();
+	}
+	void collect_diagnostics(bool enabled) {
+		ifcopenshell::logger::root().collect_diagnostics(enabled);
+	}
+	std::string take_diagnostics() {
+		return ifcopenshell::encode_diagnostics_json(ifcopenshell::logger::root().take_diagnostics());
+	}
 	void turn_on_detailed_logging() {
 		ifcopenshell::logger::root().set_output(&std::cout, &std::cout);
 		ifcopenshell::logger::root().verbosity(ifcopenshell::logger::LOG_DEBUG);
