@@ -1,4 +1,6 @@
 # This file was generated with the assistance of an AI coding tool.
+import json
+
 import numpy as np
 import pytest
 
@@ -60,6 +62,7 @@ def test_single_mapped_occurrence_preserves_its_opening(kernel, openings_enabled
     settings.set("use-world-coords", False)
     settings.set("weld-vertices", True)
     settings.set("disable-opening-subtractions", not openings_enabled)
+    iterator = None
     if threads is None:
         shape = ifcopenshell.geom.create_shape(settings, host, geometry_library=kernel)
     else:
@@ -87,30 +90,43 @@ def test_single_mapped_occurrence_preserves_its_opening(kernel, openings_enabled
     _, counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
     assert np.all(counts == 2)
     if threads is not None:
+        assert iterator is not None
         assert not iterator.next()
 
 
 @pytest.mark.parametrize("openings_enabled", (True, False))
 @pytest.mark.parametrize("threads", (None, 1, 4), ids=("create-shape", "iterator-1", "iterator-4"))
-def test_unsupported_opening_subtraction_is_not_a_successful_shape(openings_enabled, threads):
+def test_unsupported_opening_subtraction_retains_host_with_diagnostic(openings_enabled, threads):
     model, host, _ = mapped_host_with_opening()
     settings = ifcopenshell.geom.settings()
     settings.set("disable-opening-subtractions", not openings_enabled)
+    ifcopenshell.get_log()
+    iterator = None
     if threads is None:
-        if openings_enabled:
-            with pytest.raises(RuntimeError, match="Failed to process shape"):
-                ifcopenshell.geom.create_shape(settings, host, geometry_library="cgal-simple")
-            return
         shape = ifcopenshell.geom.create_shape(settings, host, geometry_library="cgal-simple")
     else:
         iterator = ifcopenshell.geom.iterator(settings, model, threads, include=[host], geometry_library="cgal-simple")
-        if openings_enabled:
-            assert not iterator.initialize()
-            return
         assert iterator.initialize()
         shape = iterator.get()
 
     assert shape.id == host.id()
     assert ifcopenshell.util.shape.get_volume(shape.geometry) == pytest.approx(64.0, abs=1e-7)
     if threads is not None:
+        assert iterator is not None
         assert not iterator.next()
+    events = [
+        json.loads(line.split("PARSER_EVENT_V1 ", 1)[1])
+        for line in ifcopenshell.get_log().splitlines()
+        if "PARSER_EVENT_V1 " in line
+    ]
+    opening_events = [event for event in events if event["category"] == "opening_incomplete"]
+    if openings_enabled:
+        assert len(opening_events) == 1
+        event = opening_events[0]
+        assert event["entity_id"] == str(host.id())
+        assert event["source_id"] == str(model.by_type("IfcOpeningElement")[0].id())
+        assert event["action"] == "skip_cut"
+        assert event["outcome"] == "partial"
+        assert event["reason"] == "all_complete_cut_attempts_failed"
+    else:
+        assert opening_events == []

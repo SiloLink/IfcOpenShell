@@ -83,6 +83,7 @@ def test_hybrid_preserves_surviving_geometry_and_its_face_colours(degenerate, en
     model, wall, fragment, slab = styled_wall(degenerate)
     settings = ifcopenshell.geom.settings()
     settings.set("apply-default-materials", False)
+    iterator = None
     if entrypoint == "create_shape":
         shape = ifcopenshell.geom.create_shape(settings, wall, geometry_library=HYBRID)
     else:
@@ -113,6 +114,7 @@ def test_hybrid_preserves_surviving_geometry_and_its_face_colours(degenerate, en
                 assert not degenerate
                 assert colour == (1.0, 0.0, 0.0, 0.6)
     if entrypoint == "iterator":
+        assert iterator is not None
         assert not iterator.next()
 
 
@@ -123,6 +125,7 @@ def test_last_colour_capable_backend_keeps_healthy_sibling(fragment_first, entry
     wall.Representation.Representations[0].Items = (fragment, slab) if fragment_first else (slab, fragment)
     settings = ifcopenshell.geom.settings()
     settings.set("apply-default-materials", False)
+    iterator = None
     if entrypoint == "create_shape":
         shape = ifcopenshell.geom.create_shape(settings, wall, geometry_library=HYBRID)
     else:
@@ -139,4 +142,5 @@ def test_last_colour_capable_backend_keeps_healthy_sibling(fragment_first, entry
         assert material_id >= 0
         assert tuple(round(float(channel), 6) for channel in colours[material_id]) == (0.0, 0.0, 1.0, 0.8)
     if entrypoint == "iterator":
+        assert iterator is not None
         assert not iterator.next()

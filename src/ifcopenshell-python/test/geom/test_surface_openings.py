@@ -85,8 +85,8 @@ def run_case(case):
             del faces[1]  # The authored surface has no top face.
         expected_area = 192.0 if closed else 120.0
 
+    colours = ((0.8, 0.2, 0.1), (0.1, 0.8, 0.2), (0.2, 0.1, 0.8), (0.8, 0.8, 0.1), (0.8, 0.1, 0.8))
     if styled:
-        colours = ((0.8, 0.2, 0.1), (0.1, 0.8, 0.2), (0.2, 0.1, 0.8), (0.8, 0.8, 0.1), (0.8, 0.1, 0.8))
         for source_face, rgb in zip(faces, colours):
             colour = model.createIfcColourRgb(None, *rgb)
             style = model.createIfcSurfaceStyle("Surface", "BOTH", [model.createIfcSurfaceStyleShading(colour)])

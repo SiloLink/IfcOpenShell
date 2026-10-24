@@ -88,6 +88,7 @@ def test_failed_sweep_keeps_both_healthy_siblings_with_colours_and_transforms(ma
     assert reference_vertices[:, 0].min() < offset[0] - 2.0
     assert reference_vertices[:, 0].max() > offset[0] + 2.0
 
+    iterator = None
     if threads is None:
         shape = ifcopenshell.geom.create_shape(settings, product, geometry_library=kernel)
     else:
@@ -99,4 +100,5 @@ def test_failed_sweep_keeps_both_healthy_siblings_with_colours_and_transforms(ma
         ifcopenshell.util.shape.get_volume(reference.geometry), abs=1e-12
     )
     if threads is not None:
+        assert iterator is not None
         assert not iterator.next()
