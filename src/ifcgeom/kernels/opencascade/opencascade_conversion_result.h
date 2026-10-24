@@ -45,15 +45,19 @@ namespace ifcopenshell {
 		class IFC_GEOMLIBRARY_API open_cascade_shape : public ifcopenshell::geom::conversion_result_shape {
 		public:
 			open_cascade_shape(const TopoDS_Shape& shape);
-            open_cascade_shape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles, std::optional<bool> source_closed = std::nullopt);
+            open_cascade_shape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles, std::optional<bool> source_closed = std::nullopt, bool face_styles_complete = true);
             open_cascade_shape(TopoDS_Shape&& shape);
-            open_cascade_shape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles, std::optional<bool> source_closed = std::nullopt);
+            open_cascade_shape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles, std::optional<bool> source_closed = std::nullopt, bool face_styles_complete = true);
 
             const TopoDS_Shape& shape() const;
 			operator const TopoDS_Shape& ();
 			virtual std::string_view backend_id() const;
 			const std::vector<taxonomy::style::ptr>& face_styles() const override { return face_styles_; }
+            bool face_styles_complete() const override { return face_styles_complete_; }
             std::optional<bool> source_closed() const { return source_closed_; }
+            conversion_result_shape* clone_without_face_styles() const override {
+                return new open_cascade_shape(shape_, {}, source_closed_);
+            }
 
             virtual void triangulate(ifcopenshell::geom::settings settings, const ifcopenshell::geom::taxonomy::matrix4& place, ifcopenshell::geom::triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger& logger = ifcopenshell::logger::root()) const;
 			virtual void triangulate(
@@ -118,6 +122,7 @@ namespace ifcopenshell {
 			TopoDS_Shape shape_;
 			std::vector<taxonomy::style::ptr> face_styles_;
             std::optional<bool> source_closed_;
+            bool face_styles_complete_ = true;
         };
 
 	}

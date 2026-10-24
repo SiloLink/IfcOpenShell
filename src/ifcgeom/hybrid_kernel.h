@@ -60,6 +60,9 @@ bool preserves_face_styles(
             return false;
         }
         const auto& shape = results[i].shape();
+        if (!shape || !shape->face_styles_complete()) {
+            return false;
+        }
         const auto& styles = shape->face_styles();
         if (styles.empty() && std::none_of(
                                   source_styles->second.begin(), source_styles->second.end(), [](const auto& style) { return !!style; })) {
@@ -117,9 +120,6 @@ namespace ifcopenshell {
                     });
                     bool has_openings = ops.size();
                     auto eligible = [&](const auto& k) {
-                        if (has_face_styles && !k->supports_face_styles()) {
-                            return false;
-                        }
 #ifdef IFOPSH_WITH_CGAL
                         if (has_openings && !k->supports_boolean_operations()) {
                             // @todo this would fail later on in the find_openings() call, because we have a
@@ -133,6 +133,25 @@ namespace ifcopenshell {
 #endif
                         return !has_openings || k->geometry_library() != "passthrough";
                     };
+                    std::vector<ifcopenshell::geom::conversion_result> material_fallback;
+                    bool material_fallback_partial = false;
+                    size_t failed_attempts = 0;
+                    auto event = [&](const char* category, const char* action, const char* outcome) {
+                        return diagnostic_fields{{"category", category}, {"stage", "geometry"}, {"source_id", std::to_string(item->instance.id())}, {"reason", "complete_backend_requirements_unavailable"}, {"action", action}, {"outcome", outcome}};
+                    };
+                    auto publish_material_fallback = [&]() {
+                        if (material_fallback.empty()) {
+                            return false;
+                        }
+                        material_fallback.front().add_diagnostic(event("material_degraded", "use_object_or_default_material", "degraded"));
+                        if (material_fallback_partial) {
+                            material_fallback.front().add_diagnostic(event("geometry_partial", "use_partial_conversion", "partial"));
+                            logger_.warning("Complete geometry unavailable; action=use_partial_conversion outcome=partial material=degraded", item->instance);
+                        }
+                        rs.insert(rs.end(), material_fallback.begin(), material_fallback.end());
+                        logger_.warning("Face material provenance unavailable; action=use_object_or_default_material outcome=degraded", item->instance);
+                        return true;
+                    };
                     auto attempt = [&](abstract_kernel& k, bool allow_partial) {
                         k.apply_settings(settings_);
                         const bool partial_success = k.partial_success_is_success;
@@ -141,16 +160,48 @@ namespace ifcopenshell {
                         std::vector<ifcopenshell::geom::conversion_result> results;
                         try {
                             success = k.convert(item, results);
+                        } catch (const std::exception& e) {
+                            logger_.message(ifcopenshell::logger::LOG_NOTICE, "Geometry attempt exception; backend=" + k.geometry_library() + " reason=" + e.what(), item->instance);
                         } catch (...) {
-                            success = false;
+                            logger_.message(ifcopenshell::logger::LOG_NOTICE, "Geometry attempt exception; backend=" + k.geometry_library(), item->instance);
                         }
                         k.partial_success_is_success = partial_success;
 
                         if (success && has_face_styles && !preserves_face_styles(results, 0, face_styles)) {
+                            if (material_fallback.empty() && std::all_of(results.begin(), results.end(), [&](const auto& r) {
+                                    return r.shape() && face_styles.count(r.ItemId());
+                                })) {
+                                std::vector<conversion_result> fallback;
+                                for (const auto& result : results) {
+                                    if (result.shape()->face_styles().empty() && result.shape()->face_styles_complete()) {
+                                        fallback.push_back(result);
+                                        continue;
+                                    }
+                                    auto* shape = result.shape()->clone_without_face_styles();
+                                    if (!shape) {
+                                        fallback.clear();
+                                        break;
+                                    }
+                                    fallback.emplace_back(result.ItemId(), result.placement(), shape, result.style_ptr());
+                                    fallback.back().inherit_diagnostics(result);
+                                }
+                                material_fallback = std::move(fallback);
+                                material_fallback_partial = allow_partial;
+                            }
                             success = false;
                         }
                         if (success) {
+                            if (!results.empty() && allow_partial) {
+                                results.front().add_diagnostic(event("geometry_partial", "use_partial_conversion", "partial"));
+                            } else if (!results.empty() && failed_attempts) {
+                                results.front().add_diagnostic(event("fallback_recovered", "use_complete_backend", "recovered"));
+                            }
                             rs.insert(rs.end(), results.begin(), results.end());
+                            if (failed_attempts && !allow_partial) {
+                                logger_.message(ifcopenshell::logger::LOG_NOTICE, "Geometry fallback; outcome=recovered backend=" + k.geometry_library() + " failed_attempts=" + std::to_string(failed_attempts), item->instance);
+                            }
+                        } else {
+                            ++failed_attempts;
                         }
                         return success;
                     };
@@ -158,6 +209,9 @@ namespace ifcopenshell {
                         if (eligible(k) && attempt(*k, false)) {
                             return true;
                         }
+                    }
+                    if (publish_material_fallback()) {
+                        return true;
                     }
                     // Prefer complete geometry from any backend. Retry partial conversion
                     // with a fresh cache, after discarding all failed attempts' output.
@@ -168,11 +222,16 @@ namespace ifcopenshell {
                         try {
                             std::unique_ptr<abstract_kernel> partial(k->clone(logger_));
                             if (attempt(*partial, true)) {
+                                logger_.warning("Complete geometry unavailable; action=use_partial_conversion outcome=partial", item->instance);
                                 return true;
                             }
                         } catch (...) {
                         }
                     }
+                    if (publish_material_fallback()) {
+                        return true;
+                    }
+                    logger_.warning("Geometry conversion exhausted all backends; action=return_unavailable_for_recovery", item->instance);
                     return false;
                 }
 				virtual bool apply_layerset(std::vector<ifcopenshell::geom::conversion_result>& items, const ifcopenshell::geom::layerset_information& layers)
@@ -207,45 +266,90 @@ namespace ifcopenshell {
 					}
 					return false;
 				}
-                virtual bool convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
-					const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes)
-				{
-					for (auto& k : kernels_) {
-						bool is_valid = true;
-						for (auto& s : entity_shapes) {
-							if (!k->accepts(*s.shape())) {
-								is_valid = false;
-								break;
-							}
-						}
-						if (!is_valid) {
-							continue;
-						}
-						bool success = false;
+                virtual bool convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings, const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
+                    std::vector<conversion_result> material_fallback;
+                    size_t failed_attempts = 0;
+                    std::string opening_ids;
+                    for (const auto& opening : openings) {
+                        opening_ids += std::to_string(opening.first->instance.id()) + ",";
+                    }
+                    auto event = [&](const char* category, const char* action, const char* outcome) {
+                        return diagnostic_fields{{"category", category}, {"stage", "openings"}, {"source_id", std::to_string(entity.id())}, {"detail_id", opening_ids}, {"reason", "earlier_backend_requirements_unavailable"}, {"action", action}, {"outcome", outcome}};
+                    };
+                    for (auto& k : kernels_) {
+                        bool is_valid = true;
+                        for (auto& s : entity_shapes) {
+                            if (!k->accepts(*s.shape())) {
+                                is_valid = false;
+                                break;
+                            }
+                        }
+                        if (!is_valid) {
+                            continue;
+                        }
+                        bool success = false;
                         k->apply_settings(settings_);
+                        // A partial cutter can be larger than its complete Boolean
+                        // result. Try every backend with complete conversion only;
+                        // the converter can skip a whole failed opening afterwards.
+                        const bool partial_success = k->partial_success_is_success;
+                        k->partial_success_is_success = false;
                         try {
-                            success = k->convert_openings(entity, openings, entity_shapes, entity_trsf, cut_shapes);
+                            std::vector<ifcopenshell::geom::conversion_result> candidate;
+                            success = k->convert_openings(entity, openings, entity_shapes, entity_trsf, candidate);
+                            if (success) {
+                                const bool valid_shapes = std::all_of(candidate.begin(), candidate.end(), [](const auto& r) { return !!r.shape(); });
+                                const bool complete = valid_shapes && std::all_of(candidate.begin(), candidate.end(), [](const auto& r) {
+                                                          return r.shape()->face_styles_complete();
+                                                      });
+                                if (complete) {
+                                    if (!candidate.empty() && failed_attempts) {
+                                        candidate.front().add_diagnostic(event("fallback_recovered", "use_complete_backend", "recovered"));
+                                    }
+                                    cut_shapes.insert(cut_shapes.end(), candidate.begin(), candidate.end());
+                                } else {
+                                    if (valid_shapes && material_fallback.empty()) {
+                                        material_fallback = std::move(candidate);
+                                    }
+                                    success = false;
+                                }
+                            }
+                        } catch (const std::exception& e) {
+                            logger_.notice("Opening attempt exception; backend=" + k->geometry_library() + " reason=" + e.what(), entity);
+                            success = false;
                         } catch (...) {
+                            logger_.notice("Opening attempt exception; backend=" + k->geometry_library(), entity);
                             success = false;
                         }
+                        k->partial_success_is_success = partial_success;
                         if (success) {
-							return true;
-						}
-					}
-					return false;
-				}
-				virtual abstract_kernel* clone(ifcopenshell::logger& logger) const
-				{
-					std::vector<std::unique_ptr<abstract_kernel>> ks;
-					for (auto& k : kernels_) {
-						ks.emplace_back(k->clone(logger));
-					}
-					// @todo ugly
-					return new hybrid_kernel(geometry_library(), file_, const_cast<ifcopenshell::geom::settings&>(settings()), std::move(ks), logger);
-				}
-			};
-		}
-	}
-}
+                            if (failed_attempts) {
+                                logger_.notice("Opening fallback; outcome=recovered backend=" + k->geometry_library() + " failed_attempts=" + std::to_string(failed_attempts), entity);
+                            }
+                            return true;
+                        }
+                        ++failed_attempts;
+                        logger_.notice("Opening attempt failed; action=try_next_backend backend=" + k->geometry_library(), entity);
+                    }
+                    if (!material_fallback.empty()) {
+                        material_fallback.front().add_diagnostic(event("material_degraded", "use_object_or_default_material", "degraded"));
+                        cut_shapes.insert(cut_shapes.end(), material_fallback.begin(), material_fallback.end());
+                        logger_.warning("Opening face materials unavailable; action=use_object_or_default_material outcome=degraded", entity);
+                        return true;
+                    }
+                    return false;
+                }
+                virtual abstract_kernel* clone(ifcopenshell::logger& logger) const {
+                    std::vector<std::unique_ptr<abstract_kernel>> ks;
+                    for (auto& k : kernels_) {
+                        ks.emplace_back(k->clone(logger));
+                    }
+                    // @todo ugly
+                    return new hybrid_kernel(geometry_library(), file_, const_cast<ifcopenshell::geom::settings&>(settings()), std::move(ks), logger);
+                }
+            };
+            } // namespace kernels
+            } // namespace geom
+            } // namespace ifcopenshell
 
 #endif

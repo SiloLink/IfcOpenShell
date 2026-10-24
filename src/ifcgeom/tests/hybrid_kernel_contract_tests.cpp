@@ -1,16 +1,23 @@
 // This file was generated with the assistance of an AI coding tool.
+#include "ifcgeom/converter.h"
 #include "ifcgeom/hybrid_kernel.h"
 #include "ifcgeom/iterator.h"
 #include "ifcgeom/kernels/opencascade/opencascade_conversion_result.h"
 
+#include <boost/property_tree/json_parser.hpp>
 #include <BRep_Builder.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepGProp.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <gp_Pln.hxx>
+#include <GProp_GProps.hxx>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <TopoDS_Compound.hxx>
 
 #if defined(__unix__)
@@ -87,13 +94,17 @@ class ControlledKernel : public abstract_kernel {
         const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>&,
         const std::vector<conversion_result>&,
         const taxonomy::matrix4&,
-        std::vector<conversion_result>&) override {
+        std::vector<conversion_result>& output) override {
+        if (partial_success_is_success) {
+            throw std::runtime_error("opening conversion allowed an incomplete cutter");
+        }
+        output.insert(output.end(), results_.begin(), results_.end());
         return run();
     }
 };
 
-std::unique_ptr<ifcopenshell::file> fixture() {
-    const std::string data =
+std::unique_ptr<ifcopenshell::file> fixture(bool openings = false) {
+    std::string data =
         "ISO-10303-21;\nHEADER;\n"
         "FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');\n"
         "FILE_NAME('hybrid-contract.ifc','2026-10-20T00:00:00',(),(),'','','');\n"
@@ -107,6 +118,20 @@ std::unique_ptr<ifcopenshell::file> fixture() {
         "#10=IFCWALL('0000000000000000000002',$,$,$,$,$,$,$,.NOTDEFINED.);\n"
         "#11=IFCWALL('0000000000000000000003',$,$,$,$,$,$,$,.NOTDEFINED.);\n"
         "ENDSEC;\nEND-ISO-10303-21;\n";
+    if (openings) {
+        const std::string extra =
+            "#8=IFCCARTESIANPOINT((1.,0.,0.));\n"
+            "#9=IFCPOLYLINE((#1,#8));\n"
+            "#13=IFCLOCALPLACEMENT($,#2);\n"
+            "#100=IFCSHAPEREPRESENTATION(#3,'Body','Curve3D',(#9));\n"
+            "#101=IFCPRODUCTDEFINITIONSHAPE($,$,(#100));\n"
+            "#20=IFCWALL('0000000000000000000020',$,$,$,$,#13,#101,$,.NOTDEFINED.);\n"
+            "#21=IFCOPENINGELEMENT('0000000000000000000021',$,$,$,$,#13,#101,$,.OPENING.);\n"
+            "#22=IFCOPENINGELEMENT('0000000000000000000022',$,$,$,$,#13,#101,$,.OPENING.);\n"
+            "#23=IFCRELVOIDSELEMENT('0000000000000000000023',$,$,$,#20,#21);\n"
+            "#24=IFCRELVOIDSELEMENT('0000000000000000000024',$,$,$,#20,#22);\n";
+        data.insert(data.rfind("ENDSEC;"), extra);
+    }
     std::istringstream input(data);
     return std::make_unique<ifcopenshell::file>(input, static_cast<int>(data.size()));
 }
@@ -136,9 +161,14 @@ void ordinary_fallback(ifcopenshell::file& file, Operation operation, Outcome fi
     std::vector<std::unique_ptr<abstract_kernel>> backends;
     backends.emplace_back(std::make_unique<ControlledKernel>(settings, first_outcome, first_calls));
     backends.emplace_back(std::make_unique<ControlledKernel>(settings, Outcome::success, fallback_calls));
+    auto* first = backends.front().get();
+    auto* fallback = backends.back().get();
     hybrid_kernel kernel("hybrid-controlled", &file, settings, std::move(backends));
     if (!invoke(kernel, file, operation) || first_calls != 1 || fallback_calls != 1) {
         throw std::runtime_error("ordinary unsupported/exception fallback did not reach the next backend");
+    }
+    if (!first->partial_success_is_success || !fallback->partial_success_is_success) {
+        throw std::runtime_error("fallback did not restore backend partial-conversion policy");
     }
 }
 
@@ -257,6 +287,9 @@ int partial_retry_contracts(ifcopenshell::file& file) {
     if (!kernel.convert(item, results) || results.size() != 2 || results[0].ItemId() != 99 || results[1].ItemId() != 11) {
         throw std::runtime_error("complete conversion did not take priority, or failed output leaked");
     }
+    if (results[1].diagnostics().size() != 1 || results[1].diagnostics()[0].at("category") != "fallback_recovered") {
+        throw std::runtime_error("complete fallback was recorded as a final loss");
+    }
 
     second_complete = false;
     hybrid_kernel retry("hybrid-controlled", &file, settings, backends());
@@ -329,7 +362,7 @@ int face_style_contracts(ifcopenshell::file& file) {
         return conversion_result(id, new open_cascade_shape(face, std::move(styles)));
     };
     int checks = 0;
-    auto check = [&](const char* label, std::vector<conversion_result> output, bool expected) {
+    auto check = [&](const char* label, std::vector<conversion_result> output, bool expected, bool fallback = false) {
         settings settings;
         int calls = 0;
         std::vector<std::unique_ptr<abstract_kernel>> backends;
@@ -340,16 +373,52 @@ int face_style_contracts(ifcopenshell::file& file) {
         if (kernel.convert(item, results) != expected || (!expected && !results.empty())) {
             throw std::runtime_error(std::string("face style contract failed: ") + label);
         }
+        if (fallback) {
+            for (const auto& r : results) {
+                if (!r.shape()->face_styles().empty() || r.shape()->num_faces() != 1 ||
+                    !std::static_pointer_cast<open_cascade_shape>(r.shape())->shape().IsSame(face)) {
+                    throw std::runtime_error("material fallback changed topology or retained untrusted styles");
+                }
+            }
+        }
         ++checks;
     };
     check("discarded source style", {result(10, {green})}, true);
-    check("missing styles", {result(10, {})}, false);
-    check("null styled face", {result(10, {nullptr})}, false);
-    check("foreign style", {result(10, {foreign})}, false);
-    check("wrong representation item", {result(11, {green})}, false);
+    check("missing styles", {result(10, {})}, true, true);
+    check("null styled face", {result(10, {nullptr})}, true, true);
+    check("foreign style", {result(10, {foreign})}, true, true);
+    check("wrong representation item", {result(11, {green})}, true, true);
     check("unknown representation item", {result(99, {green})}, false);
-    check("wrong face cardinality", {result(10, {red, green})}, false);
+    check("wrong face cardinality", {result(10, {red, green})}, true, true);
     check("unstyled sibling", {result(10, {green}), result(11, {})}, true);
+
+    {
+        settings settings;
+        int calls = 0;
+        std::vector<std::unique_ptr<abstract_kernel>> backends;
+        backends.emplace_back(std::make_unique<ControlledKernel>(
+            settings, Outcome::success, calls, 0, std::vector<conversion_result>{result(10, {foreign})}));
+        backends.emplace_back(std::make_unique<ControlledKernel>(
+            settings, Outcome::success, calls, 0, std::vector<conversion_result>{result(10, {green})}));
+        hybrid_kernel kernel("hybrid-controlled", &file, settings, std::move(backends));
+        std::vector<conversion_result> results;
+        if (!kernel.convert(item, results) || results.size() != 1 ||
+            results.front().shape()->face_styles() != std::vector<taxonomy::style::ptr>{green}) {
+            throw std::runtime_error("complete material mapping did not take priority over fallback");
+        }
+        ++checks;
+    }
+
+    {
+        open_cascade_shape degraded(face, {}, false, false);
+        std::unique_ptr<conversion_result_shape> clone(degraded.clone());
+        std::unique_ptr<conversion_result_shape> compound(degraded.wrap_in_compound());
+        std::unique_ptr<conversion_result_shape> moved(degraded.moved(taxonomy::make<taxonomy::matrix4>()));
+        if (clone->face_styles_complete() || compound->face_styles_complete() || moved->face_styles_complete()) {
+            throw std::runtime_error("shape transforms lost incomplete material diagnostics");
+        }
+        ++checks;
+    }
 
     styled->children[1]->surface_style = nullptr;
     TopoDS_Compound two_faces;
@@ -371,14 +440,91 @@ int face_style_contracts(ifcopenshell::file& file) {
                 settings, complete, calls, std::vector<conversion_result>{result(10, {style})}, capable));
             hybrid_kernel kernel("hybrid-controlled", &file, settings, std::move(backends));
             std::vector<conversion_result> results;
-            const bool expected = capable && style == red;
+            const bool expected = true;
             if (kernel.convert(item, results) != expected || results.size() != (expected ? 1 : 0)) {
-                throw std::runtime_error("partial retry bypassed backend eligibility or surviving face style validation");
+                throw std::runtime_error("partial retry did not preserve geometry with material fallback");
+            }
+            std::set<std::string> categories;
+            for (const auto& event : results.front().diagnostics()) {
+                categories.insert(event.at("category"));
+            }
+            if (!categories.count("geometry_partial") || (style == foreign && !categories.count("material_degraded"))) {
+                throw std::runtime_error("combined partial geometry/material degradation lost a diagnostic");
             }
             ++checks;
         }
     }
     return checks;
+}
+
+void opening_fallback_discards_failed_output(ifcopenshell::file& file) {
+    settings settings;
+    int calls = 0;
+    auto face = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), 0., 1., 0., 1.).Face();
+    std::vector<std::unique_ptr<abstract_kernel>> backends;
+    for (auto outcome : {Outcome::unsupported, Outcome::exception, Outcome::success}) {
+        backends.emplace_back(std::make_unique<ControlledKernel>(settings, outcome, calls, 0, std::vector<conversion_result>{conversion_result(outcome == Outcome::success ? 10 : 99, new open_cascade_shape(face))}));
+    }
+    hybrid_kernel kernel("hybrid-controlled", &file, settings, std::move(backends));
+    std::vector<conversion_result> output;
+    if (!kernel.convert_openings(file.instance_by_id(10), {}, {}, taxonomy::matrix4(), output) ||
+        output.size() != 1 || output[0].ItemId() != 10) {
+        throw std::runtime_error("failed opening backend leaked its output");
+    }
+}
+
+void opening_partial_contract(bool complete_batch, bool all_fail, bool throws, bool all_recover = false) {
+    class OpeningKernel : public ControlledKernel {
+        bool complete_batch_, all_fail_, throws_, all_recover_;
+        int& cuts_;
+
+      public:
+        OpeningKernel(const ifcopenshell::geom::settings& s, int& calls, int& cuts, bool complete_batch, bool all_fail, bool throws, bool all_recover)
+            : ControlledKernel(s, Outcome::success, calls), complete_batch_(complete_batch), all_fail_(all_fail), throws_(throws), all_recover_(all_recover), cuts_(cuts) {}
+        bool convert(const taxonomy::ptr item, std::vector<conversion_result>& output) override {
+            output.emplace_back(item->instance.id(), new open_cascade_shape(BRepPrimAPI_MakeBox(4., 4., 4.).Shape()));
+            return true;
+        }
+        bool convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>& ops, const std::vector<conversion_result>& input, const taxonomy::matrix4&, std::vector<conversion_result>& output) override {
+            ++cuts_;
+            const bool success = complete_batch_ || (all_recover_ && ops.size() == 1) || (!all_fail_ && cuts_ == 2);
+            const double side = success ? (complete_batch_ ? 2. : 3.) : 100.;
+            output.emplace_back(input.front().ItemId(), new open_cascade_shape(BRepPrimAPI_MakeBox(side, side, side).Shape()));
+            if (!success && throws_) {
+                throw std::runtime_error("injected cut failure");
+            }
+            return success;
+        }
+    };
+    auto file = fixture(true);
+    settings settings;
+    settings.get<settings::OutputDimensionality>().value = settings::CURVES_SURFACES_AND_SOLIDS;
+    int calls = 0, cuts = 0;
+    ifcopenshell::logger diagnostic_logger;
+    std::ostringstream diagnostic_log;
+    diagnostic_logger.set_output(static_cast<std::ostream*>(nullptr), &diagnostic_log);
+    converter converter(std::make_unique<OpeningKernel>(settings, calls, cuts, complete_batch, all_fail, throws, all_recover), file.get(), settings, diagnostic_logger);
+    std::unique_ptr<native_element> result(converter.create_brep_for_representation_and_product(file->instance_by_id(100), file->instance_by_id(20)));
+    if (!result || std::distance(result->geometry().begin(), result->geometry().end()) != 1) {
+        throw std::runtime_error("failed cut lost its valid host");
+    }
+    auto shape = std::dynamic_pointer_cast<open_cascade_shape>(result->geometry().begin()->shape());
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(shape->shape(), props);
+    const double volume = complete_batch ? 8. : (all_fail ? 64. : 27.);
+    if (std::abs(props.Mass() - volume) > 1.e-8 || cuts != (complete_batch ? 1 : 3)) {
+        throw std::runtime_error("opening retry mismatch: volume=" + std::to_string(props.Mass()) + " cuts=" + std::to_string(cuts));
+    }
+    if (all_recover) {
+        if (diagnostic_log.str().find("\"category\":\"opening_incomplete\"") != std::string::npos ||
+            diagnostic_log.str().find("\"category\":\"fallback_recovered\"") == std::string::npos) {
+            throw std::runtime_error("all recovered single cuts did not produce a recovered summary");
+        }
+    } else if (!complete_batch) {
+        if (diagnostic_log.str().find("\"category\":\"opening_incomplete\"") == std::string::npos) {
+            throw std::runtime_error("final incomplete opening did not retain a diagnostic");
+        }
+    }
 }
 
 #if defined(__unix__)
@@ -414,6 +560,43 @@ void fatal_fault_is_contained(ifcopenshell::file& file, Operation operation, int
     }
 }
 #endif
+
+void concurrent_diagnostic_events() {
+    ifcopenshell::logger logger;
+    std::ostringstream output;
+    logger.set_output(static_cast<std::ostream*>(nullptr), &output);
+    std::vector<std::thread> workers;
+    for (int worker = 0; worker < 4; ++worker) {
+        workers.emplace_back([&, worker]() {
+            for (int i = 0; i < 20; ++i) {
+                logger.diagnostic(ifcopenshell::logger::LOG_WARNING,
+                                  {{"category", "geometry_partial"}, {"entity_id", std::to_string(worker * 20 + i)}, {"reason", "quoted \"reason\"\nsecond line"}});
+            }
+        });
+    }
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    std::istringstream lines(output.str());
+    std::string line;
+    std::set<int> identities;
+    while (std::getline(lines, line)) {
+        const auto position = line.find("PARSER_EVENT_V1 ");
+        if (position == std::string::npos) {
+            throw std::runtime_error("diagnostic lines were interleaved or split");
+        }
+        std::istringstream encoded(line.substr(position + 16));
+        boost::property_tree::ptree event;
+        boost::property_tree::read_json(encoded, event);
+        if (event.get<std::string>("reason") != "quoted \"reason\"\nsecond line") {
+            throw std::runtime_error("diagnostic reason did not survive JSON escaping");
+        }
+        identities.insert(event.get<int>("entity_id"));
+    }
+    if (identities.size() != 80) {
+        throw std::runtime_error("concurrent diagnostics lost or merged identities");
+    }
+}
 } // namespace
 
 int main() {
@@ -440,6 +623,19 @@ int main() {
         ++checks;
         checks += partial_retry_contracts(*file);
         checks += face_style_contracts(*file);
+        opening_fallback_discards_failed_output(*file);
+        ++checks;
+        for (bool throws : {false, true}) {
+            opening_partial_contract(false, false, throws);
+            opening_partial_contract(false, true, throws);
+            checks += 2;
+        }
+        opening_partial_contract(true, false, false);
+        ++checks;
+        opening_partial_contract(false, false, false, true);
+        ++checks;
+        concurrent_diagnostic_events();
+        ++checks;
         std::cout << "PASS hybrid contracts: " << checks << " checks\n";
         return 0;
     } catch (const std::exception& error) {

@@ -20,9 +20,10 @@
 #ifndef CONVERSIONRESULT_H
 #define CONVERSIONRESULT_H
 
-#include "../ifcgeom/render_styles.h"
 #include "../ifcgeom/conversion_settings.h"
+#include "../ifcgeom/render_styles.h"
 #include "../ifcgeom/taxonomy.h"
+#include "../ifcparse/logger.h"
 
 #include <algorithm>
 #include <array>
@@ -31,14 +32,14 @@
 #include <iomanip>
 #include <limits>
 #include <memory>
-#include <string_view>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 #include <typeinfo>
+#include <unordered_map>
 #include <utility>
 #include <vector>
-#include <unordered_map>
 
 struct edge_key {
 	int v1, v2;
@@ -523,8 +524,14 @@ namespace ifcopenshell::geom {
 			static const std::vector<ifcopenshell::geom::taxonomy::style::ptr> empty;
 			return empty;
 		}
-		ifcopenshell::geom::triangulation* triangulate(const ifcopenshell::geom::settings& settings, ifcopenshell::logger& logger = ifcopenshell::logger::root()) const;
-		virtual void serialize(const ifcopenshell::geom::taxonomy::matrix4& place, std::string&) const = 0;
+        virtual bool face_styles_complete() const { return true; }
+        // A detached shape for object-level material fallback. Unknown styled
+        // backends must explicitly support removal rather than silently retain it.
+        virtual conversion_result_shape* clone_without_face_styles() const {
+            return nullptr;
+        }
+        ifcopenshell::geom::triangulation* triangulate(const ifcopenshell::geom::settings& settings, ifcopenshell::logger& logger = ifcopenshell::logger::root()) const;
+        virtual void serialize(const ifcopenshell::geom::taxonomy::matrix4& place, std::string&) const = 0;
 
 		virtual int surface_genus() const = 0;
 		virtual bool is_manifold() const = 0;
@@ -574,42 +581,49 @@ namespace ifcopenshell::geom {
 
 	class IFC_GEOM_API conversion_result {
 	private:
-		int id;
-		ifcopenshell::geom::taxonomy::matrix4::ptr placement_;
-		std::shared_ptr<conversion_result_shape> shape_;
-		ifcopenshell::geom::taxonomy::style::ptr style_;
-	public:
-		conversion_result(int id, ifcopenshell::geom::taxonomy::matrix4::ptr placement, conversion_result_shape* shape, ifcopenshell::geom::taxonomy::style::ptr style)
-			: id(id), placement_(placement ? placement : ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape), style_(style)
-		{}
-		conversion_result(int id, ifcopenshell::geom::taxonomy::matrix4::ptr placement, conversion_result_shape* shape)
-			: id(id), placement_(placement ? placement : ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape)
-		{}
-		conversion_result(int id, conversion_result_shape* shape, ifcopenshell::geom::taxonomy::style::ptr style)
-			: id(id), placement_(ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape), style_(style)
-		{}
-		conversion_result(int id, conversion_result_shape* shape)
-			: id(id), placement_(ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape)
-		{}
-		void append(ifcopenshell::geom::taxonomy::matrix4::ptr trsf);
-		void prepend(ifcopenshell::geom::taxonomy::matrix4::ptr trsf);
-		std::shared_ptr<conversion_result_shape> shape() const { return shape_; }
-		ifcopenshell::geom::taxonomy::matrix4::ptr placement() const { return placement_; }
-		bool hasStyle() const { return !!style_; }
-		const ifcopenshell::geom::taxonomy::style& style() const { return *style_; }
-		ifcopenshell::geom::taxonomy::style::ptr style_ptr() const { return style_; }
-		void setStyle(ifcopenshell::geom::taxonomy::style::ptr newStyle) { style_ = newStyle; }
-		int ItemId() const { return id; }
-		conversion_result_shape* apply_transform(double unit_scale = 1.) const {
-			if (unit_scale != 1.) {
-				auto m = ifcopenshell::geom::taxonomy::matrix4::ptr(placement_->clone_());
-				m->pre_multiply_scale(unit_scale);
-				return shape_->moved(m);
-			} else {
-				return shape_->moved(placement_);
-			}
-		}
-	};
+      int id;
+      ifcopenshell::geom::taxonomy::matrix4::ptr placement_;
+      std::shared_ptr<conversion_result_shape> shape_;
+      ifcopenshell::geom::taxonomy::style::ptr style_;
+      std::vector<ifcopenshell::diagnostic_fields> diagnostics_;
+
+    public:
+#ifndef SWIG
+      // Carried by candidate geometry. Only selected results are logged by the
+      // converter, so failed backend attempts cannot become final problems.
+      const auto& diagnostics() const { return diagnostics_; }
+      void add_diagnostic(ifcopenshell::diagnostic_fields event) { diagnostics_.push_back(std::move(event)); }
+      void inherit_diagnostics(const conversion_result& other) {
+          diagnostics_.insert(diagnostics_.end(), other.diagnostics_.begin(), other.diagnostics_.end());
+      }
+#endif
+      conversion_result(int id, ifcopenshell::geom::taxonomy::matrix4::ptr placement, conversion_result_shape* shape, ifcopenshell::geom::taxonomy::style::ptr style)
+          : id(id), placement_(placement ? placement : ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape), style_(style) {}
+      conversion_result(int id, ifcopenshell::geom::taxonomy::matrix4::ptr placement, conversion_result_shape* shape)
+          : id(id), placement_(placement ? placement : ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape) {}
+      conversion_result(int id, conversion_result_shape* shape, ifcopenshell::geom::taxonomy::style::ptr style)
+          : id(id), placement_(ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape), style_(style) {}
+      conversion_result(int id, conversion_result_shape* shape)
+          : id(id), placement_(ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>()), shape_(shape) {}
+      void append(ifcopenshell::geom::taxonomy::matrix4::ptr trsf);
+      void prepend(ifcopenshell::geom::taxonomy::matrix4::ptr trsf);
+      std::shared_ptr<conversion_result_shape> shape() const { return shape_; }
+      ifcopenshell::geom::taxonomy::matrix4::ptr placement() const { return placement_; }
+      bool hasStyle() const { return !!style_; }
+      const ifcopenshell::geom::taxonomy::style& style() const { return *style_; }
+      ifcopenshell::geom::taxonomy::style::ptr style_ptr() const { return style_; }
+      void setStyle(ifcopenshell::geom::taxonomy::style::ptr newStyle) { style_ = newStyle; }
+      int ItemId() const { return id; }
+      conversion_result_shape* apply_transform(double unit_scale = 1.) const {
+          if (unit_scale != 1.) {
+              auto m = ifcopenshell::geom::taxonomy::matrix4::ptr(placement_->clone_());
+              m->pre_multiply_scale(unit_scale);
+              return shape_->moved(m);
+          } else {
+              return shape_->moved(placement_);
+          }
+      }
+    };
 
 #ifndef SWIG
 	namespace util {
