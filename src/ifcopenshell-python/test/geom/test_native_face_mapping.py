@@ -2,12 +2,14 @@
 """Face-surface mapping regressions, isolated from pytest on native failure."""
 
 import argparse
+import gc
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+import weakref
 from pathlib import Path
 
 
@@ -72,6 +74,11 @@ def run_native_case(case, kernel, threads):
         geometry_library=kernel,
         logger=logger,
     )
+    logger_reference = weakref.ref(logger)
+    if case.startswith("logger-lifetime"):
+        logger = None
+        gc.collect()
+        assert logger_reference() is not None
     assert iterator.initialize()
     shape = iterator.get()
     assert shape.guid == product.GlobalId
@@ -81,6 +88,7 @@ def run_native_case(case, kernel, threads):
         assert len(vertices) == 3, (vertices, triangles)
         assert len(triangles) == 1, triangles
         assert all(0.0 <= point[0] <= 1.0 for point in vertices)
+        assert logger is not None
         assert "GEO295" in [message.code for message in logger]
     else:
         assert len(triangles) == 2
@@ -90,6 +98,10 @@ def run_native_case(case, kernel, threads):
             expected = 1.0 if max(a[0], b[0], c[0]) <= 1.0 or same_sense else -1.0
             assert abs(normal_z - expected) < 1e-8, (case, triangle, normal_z, expected)
     assert not iterator.next()
+    if case.startswith("logger-lifetime"):
+        del iterator
+        gc.collect()
+        assert logger_reference() is None
     print(json.dumps({"case": case, "kernel": kernel, "threads": threads, "triangles": len(triangles)}), flush=True)
 
 
@@ -122,7 +134,10 @@ def run_isolated(case, kernel, threads):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("case", choices=("failed-forward", "failed-reversed", "valid-forward", "valid-reversed"))
+    parser.add_argument(
+        "case",
+        choices=("failed-forward", "failed-reversed", "valid-forward", "valid-reversed", "logger-lifetime-forward"),
+    )
     parser.add_argument("--kernel", default="opencascade")
     parser.add_argument("--threads", type=int, default=1)
     arguments = parser.parse_args()
@@ -140,3 +155,7 @@ else:
     @pytest.mark.parametrize("same_sense", ["forward", "reversed"])
     def test_valid_face_surface_preserves_orientation(same_sense, threads):
         run_isolated(f"valid-{same_sense}", "opencascade", threads)
+
+    @pytest.mark.parametrize("threads", [1, 4])
+    def test_iterator_keeps_custom_logger_alive_until_destruction(threads):
+        run_isolated("logger-lifetime-forward", "opencascade", threads)
