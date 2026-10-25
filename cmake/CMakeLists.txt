@@ -637,9 +637,9 @@ if(BUILD_IFCPARSE_EXPERIMENTAL_WRAPPER)
 endif()
 
 if(BUILD_IFCGEOM)
-    # CGAL::CGAL target already has dependencies resolved.
+    # Use the wrapper that also supplies the dependency's exception-safety fix.
     if(WITH_CGAL)
-        set(CGAL_LIBRARIES CGAL::CGAL)
+        set(CGAL_LIBRARIES IFCOPENSHELL_CGAL)
     endif()
 
     add_subdirectory(../src/ifcgeom ifcgeom)

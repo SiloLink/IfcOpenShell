@@ -64,4 +64,17 @@ endif()
 add_library(IFCOPENSHELL_CGAL INTERFACE)
 target_link_libraries(IFCOPENSHELL_CGAL INTERFACE CGAL::CGAL)
 target_compile_definitions(IFCOPENSHELL_CGAL INTERFACE IFOPSH_WITH_CGAL)
+
+# Both supplied include directories and package-config builds use the same
+# ownership fix; never mutate a shared /deps or system CGAL installation.
+get_target_property(cgal_target_includes CGAL::CGAL INTERFACE_INCLUDE_DIRECTORIES)
+find_path(cgal_external_structure_include
+    CGAL/Convex_decomposition_3/External_structure_builder.h
+    HINTS ${CGAL_INCLUDE_DIR} ${CGAL_INCLUDE_DIRS} ${cgal_target_includes}
+    NO_DEFAULT_PATH NO_CACHE REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/CGALExternalStructure.cmake")
+set(cgal_corrected_include "${CMAKE_BINARY_DIR}/cgal-include")
+ifcopenshell_cgal_external_structure("${cgal_external_structure_include}" "${cgal_corrected_include}")
+target_include_directories(IFCOPENSHELL_CGAL BEFORE INTERFACE
+    $<BUILD_INTERFACE:${cgal_corrected_include}>)
 install(TARGETS IFCOPENSHELL_CGAL EXPORT ${IFCOPENSHELL_EXPORT_TARGETS})
