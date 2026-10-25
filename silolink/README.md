@@ -9,7 +9,7 @@
 
 ### 快速开始：构建自定义 wheel（Linux py311）
 
-目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.3`：
+目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.4`：
 
 - Rocky Linux 9 builder，产物要求 GLIBC 2.34+（`manylinux_2_34_x86_64`）
 - upstream `nix/build-all.py`
@@ -40,8 +40,13 @@
 循环、映射实例覆盖和文件加载异常的 Python GIL 恢复也包含在此版本中。
 单次使用的映射几何保留实例的开洞上下文。
 
+`.4` 修正 CGAL external-structure 重建异常时的 point locator 所有权：
+重建成功前保留原 locator，失败时释放临时副本，避免析构访问已释放内存。
+修正在构建目录生成独立头文件，不修改系统 CGAL；不改变几何精度或降级
+策略，也不把失败的布尔运算视为完整成功。
+
 Python wrapper、geometry/parse 库和 native plugins 必须从同一源码一起
-构建、打包；不可将旧 `.2` 二进制与 `.3` 的内部 C++ 类型或库混用。
+构建、打包；不可把不同源码修订的二进制、内部 C++ 类型或库混用。
 版本号表示打包目标，具体源码提交及 wheel 哈希由交付记录绑定。
 
 前置：
