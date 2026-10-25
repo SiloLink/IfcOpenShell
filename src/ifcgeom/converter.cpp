@@ -175,74 +175,131 @@ ifcopenshell::geom::native_element* ifcopenshell::geom::converter::create_brep_f
 			representation_id_builder << "-" << op.id();
 		}
 
-		std::vector<ifcopenshell::geom::conversion_result> opened_shapes;
-		bool caught_error = false;
-		try {
-			std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> opening_items;
+        std::vector<ifcopenshell::geom::conversion_result> opened_shapes;
+        std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> opening_items;
+        std::vector<express::base> mapped_openings;
+        size_t skipped_openings = 0;
+        bool retried_batch = false;
+        std::vector<diagnostic_fields> opening_diagnostics;
+        auto skipped = [&](const express::base& opening, const std::string& reason, const char* action) {
+            opening_diagnostics.push_back({{"category", "opening_incomplete"}, {"stage", "openings"}, {"source_id", std::to_string(opening.id())}, {"reason", reason}, {"action", action}, {"outcome", "partial"}});
+        };
+        for (auto& opening : openings) {
+            try {
+                auto prod_item = taxonomy::dcast<taxonomy::geom_item>(mapping()->map(opening));
+                auto repr = mapping()->representation_of(opening);
+                auto item = repr ? mapping()->map(repr) : taxonomy::ptr{};
+                if (!prod_item || !prod_item->matrix || !item) {
+                    throw std::runtime_error("opening geometry or placement unavailable");
+                }
+                opening_items.emplace_back(item, *prod_item->matrix);
+                mapped_openings.push_back(opening);
+            } catch (const std::exception& e) {
+                ++skipped_openings;
+                skipped(opening, e.what(), "skip_unmapped_cut");
+                logger_.warning("Opening mapping failed; action=skip_cut host=#" + std::to_string(product.id()) + " reason=" + e.what(), opening);
+            } catch (...) {
+                ++skipped_openings;
+                skipped(opening, "unknown_exception", "skip_unmapped_cut");
+                logger_.warning("Opening mapping failed; action=skip_cut host=#" + std::to_string(product.id()), opening);
+            }
+        }
+        auto cut = [&](const auto& ops, const auto& input, auto& output) {
+            output.clear();
+            try {
+                if (kernel_->convert_openings(product, ops, input, *place, output)) {
+                    if (!output.empty()) {
+                        for (const auto& result : input) {
+                            output.front().inherit_diagnostics(result);
+                        }
+                    }
+                    return true;
+                }
+            } catch (const std::exception& e) {
+                logger_.message(ifcopenshell::logger::LOG_NOTICE, std::string("Opening attempt failed; retrying valid input: ") + e.what(), product);
+            } catch (...) {
+                logger_.message(ifcopenshell::logger::LOG_NOTICE, "Opening attempt failed; retrying valid input", product);
+            }
+            output.clear(); // Never publish remnants of a failed conversion.
+            return false;
+        };
+        if (opening_items.empty()) {
+            opened_shapes = shapes;
+        } else if (!cut(opening_items, shapes, opened_shapes)) {
+            retried_batch = true;
+            opened_shapes = shapes;
+            for (size_t i = 0; i < opening_items.size(); ++i) {
+                std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> single{opening_items[i]};
+                std::vector<ifcopenshell::geom::conversion_result> next;
+                if (cut(single, opened_shapes, next)) {
+                    opened_shapes = std::move(next);
+                } else {
+                    ++skipped_openings;
+                    skipped(mapped_openings[i], "all_complete_cut_attempts_failed", "skip_cut");
+                    logger_.warning("Opening subtraction failed; action=skip_cut outcome=incomplete host=#" + std::to_string(product.id()), mapped_openings[i]);
+                }
+            }
+        }
+        if (skipped_openings) {
+            logger_.warning("Opening summary: action=retain_valid_host outcome=incomplete skipped=" + std::to_string(skipped_openings) + " total=" + std::to_string(openings.size()), product);
+        } else if (retried_batch) {
+            logger_.notice("Opening summary: action=apply_individual_cuts outcome=recovered skipped=0 total=" + std::to_string(openings.size()), product);
+            opening_diagnostics.push_back({{"category", "fallback_recovered"}, {"stage", "openings"}, {"source_id", std::to_string(representation_node->instance.id())}, {"detail_id", "batch_retry"}, {"reason", "batch_cut_failed"}, {"action", "apply_individual_cuts"}, {"outcome", "recovered"}});
+        }
+        if (!opened_shapes.empty()) {
+            for (auto& diagnostic : opening_diagnostics) {
+                opened_shapes.front().add_diagnostic(std::move(diagnostic));
+            }
+        }
 
-			std::transform(openings.begin(), openings.end(), std::back_inserter(opening_items), [this](express::base opening) {
-				auto prod_item = mapping()->map(opening);
-				auto repr = mapping()->representation_of(opening);
-				if (repr) {
-					return std::make_pair(mapping()->map(repr), *taxonomy::cast<taxonomy::geom_item>(prod_item)->matrix);
-				} else {
-					return std::make_pair(taxonomy::ptr{}, taxonomy::matrix4{});
-				}
-			});
+        if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
+            for (auto it = opened_shapes.begin(); it != opened_shapes.end(); ++it) {
+                it->prepend(place);
+            }
+            place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
+            representation_id_builder << "-world-coords";
+        }
+        shapes = opened_shapes;
+    } else if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
+        for (auto it = shapes.begin(); it != shapes.end(); ++it) {
+            it->prepend(place);
+        }
+        place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
+        representation_id_builder << "-world-coords";
+    }
 
-			opening_items.erase(
-				std::remove_if(
-					opening_items.begin(),
-					opening_items.end(),
-					[](const std::pair<taxonomy::ptr, taxonomy::matrix4>& p) { return !p.first; }
-			), opening_items.end());
+    std::set<diagnostic_fields> selected_diagnostics;
+    for (const auto& result : shapes) {
+        selected_diagnostics.insert(result.diagnostics().begin(), result.diagnostics().end());
+    }
+    const bool material_diagnostic = std::any_of(selected_diagnostics.begin(), selected_diagnostics.end(), [](const auto& event) {
+        return event.at("category") == "material_degraded";
+    });
+    if (!material_diagnostic && std::any_of(shapes.begin(), shapes.end(), [](const auto& result) {
+            return result.shape() && !result.shape()->face_styles_complete();
+        })) {
+        selected_diagnostics.insert({{"category", "material_degraded"}, {"stage", "geometry_final"}, {"source_id", std::to_string(representation_node->instance.id())}, {"reason", "face_material_provenance_unavailable"}, {"action", "use_object_or_default_material"}, {"outcome", "degraded"}});
+    }
+    if (settings_.get<ifcopenshell::geom::settings::UnifyShapes>().get()) {
+        std::vector<ifcopenshell::geom::conversion_result> unified_shapes;
+        try {
+            if (kernel_->unify_shapes(shapes, unified_shapes)) {
+                std::swap(shapes, unified_shapes);
+            }
+        } catch (std::exception& e) {
+            logger_.error("GEO", 35, e);
+        }
+    }
 
-			if (opening_items.empty()) {
-				opened_shapes = shapes;
-			} else {
-				kernel_->convert_openings(product, opening_items, shapes, *place, opened_shapes);
-			}
-		} catch (const std::exception& e) {
-			logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 33, std::string("Error processing openings for: ") + e.what() + ":", product);
-			caught_error = true;
-		} catch (...) {
-			logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 34, "Error processing openings for:", product);
-		}
+    shape = new ifcopenshell::geom::native(settings_, product_type, representation_id_builder.str(), shapes);
+    for (auto diagnostic : selected_diagnostics) {
+        diagnostic["entity_id"] = std::to_string(product.id());
+        logger_.diagnostic(diagnostic.at("outcome") == "recovered" ? logger::LOG_NOTICE : logger::LOG_WARNING, diagnostic);
+    }
 
-		if (!(caught_error && opened_shapes.size() < shapes.size())) {
-			if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
-				for (auto it = opened_shapes.begin(); it != opened_shapes.end(); ++it) {
-					it->prepend(place);
-				}
-				place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
-				representation_id_builder << "-world-coords";
-			}
-			shapes = opened_shapes;
-		}
-	} else if (settings_.get<ifcopenshell::geom::settings::UseWorldCoords>().get()) {
-		for (auto it = shapes.begin(); it != shapes.end(); ++it) {
-			it->prepend(place);
-		}
-		place = ifcopenshell::geom::taxonomy::make<ifcopenshell::geom::taxonomy::matrix4>();
-		representation_id_builder << "-world-coords";
-	}
+    std::string context_string = "";
 
-	if (settings_.get<ifcopenshell::geom::settings::UnifyShapes>().get()) {
-		std::vector<ifcopenshell::geom::conversion_result> unified_shapes;
-		try {
-			if (kernel_->unify_shapes(shapes, unified_shapes)) {
-				std::swap(shapes, unified_shapes);
-			}
-		} catch (std::exception& e) {
-			logger_.error("GEO", 35, e);
-		}
-	}
-
-	shape = new ifcopenshell::geom::native(settings_, product_type, representation_id_builder.str(), shapes);
-
-	std::string context_string = "";
-
-	// IfcShapeRepresentation.
+    // IfcShapeRepresentation.
 	auto representation = representation_node->instance.as<express::entity>();
 	auto representation_identifier = representation.get("RepresentationIdentifier");
 	if (!representation_identifier.isNull()) {

@@ -95,7 +95,7 @@ namespace {
 
 }
 
-bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
+bool ifcopenshell::geom::open_cascade_kernel::convert_openings_impl(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
 	const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
 
 	util::boolean_settings bst;
@@ -138,13 +138,21 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 		std::vector<ifcopenshell::geom::conversion_result> opening_shapes;
 
 		// @todo
-		abstract_kernel::convert(op.first, opening_shapes);
+        if (!abstract_kernel::convert(op.first, opening_shapes) || opening_shapes.empty()) {
+            logger_.message(ifcopenshell::logger::LOG_NOTICE, "Opening input unavailable; action=retry_cut host=#" + std::to_string(entity.id()), op.first->instance);
+            return false;
+        }
 
-		for (unsigned int i = 0; i < opening_shapes.size(); ++i) {
-			auto opening_shape_i = std::static_pointer_cast<open_cascade_shape>(opening_shapes[i].shape())->shape();
-			const TopoDS_Shape& opening_shape_unlocated = util::ensure_fit_for_subtraction(opening_shape_i, settings_.get<settings::Precision>().get());
+        for (unsigned int i = 0; i < opening_shapes.size(); ++i) {
+            auto converted = std::dynamic_pointer_cast<open_cascade_shape>(opening_shapes[i].shape());
+            if (!converted || converted->shape().IsNull()) {
+                logger_.message(ifcopenshell::logger::LOG_NOTICE, "Opening input has no valid shape; action=retry_cut", op.first->instance);
+                return false;
+            }
+            auto opening_shape_i = converted->shape();
+            const TopoDS_Shape& opening_shape_unlocated = util::ensure_fit_for_subtraction(opening_shape_i, settings_.get<settings::Precision>().get());
 
-			auto gtrsf = opening_shapes[i].placement();
+            auto gtrsf = opening_shapes[i].placement();
 			// @todo check
 			Eigen::Matrix4d m = relative * gtrsf->ccomponents();
 			gp_Trsf trsf;
@@ -155,9 +163,8 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 			);
 			TopoDS_Shape opening_shape = util::apply_transformation(opening_shape_unlocated, trsf);
 			opening_vector.push_back(std::make_pair(util::min_edge_length(opening_shape), opening_shape));
-		}
-
-	}
+        }
+    }
 
 	std::sort(opening_vector.begin(), opening_vector.end(), opening_sorter());
 
@@ -170,14 +177,22 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 		TopoDS_Shape combined_result;
 		std::vector<taxonomy::style::ptr> combined_face_styles;
 		const auto& complete_shape = *std::static_pointer_cast<open_cascade_shape>(it3->shape());
-		face_style_sources complete_face_styles;
+        // Open surface models do not enclose a volume. Keep their source faces as
+        // the first operand unless volume reconstruction was explicitly requested.
+        const bool as_surface = complete_shape.source_closed() == false && !settings_.get<settings::MakeVolume>().get();
+        bool styles_complete = complete_shape.face_styles_complete();
+        auto lost_styles = [&](const char* reason) {
+            styles_complete = false;
+            logger_.message(ifcopenshell::logger::LOG_NOTICE, std::string(reason) + "; action=discard_face_materials", entity);
+        };
+        face_style_sources complete_face_styles;
 		if (!capture_face_styles(
 				complete_shape.shape(), complete_shape.face_styles(), complete_face_styles)) {
-			logger_.error("Opening subtraction face styles do not match source faces", entity);
-			return false;
-		}
+            lost_styles("Opening subtraction face styles do not match source faces");
+            complete_face_styles.clear();
+        }
 
-		std::list<TopoDS_Shape> parts;
+        std::list<TopoDS_Shape> parts;
 
 		auto it3_shape = complete_shape.shape();
 		if (it3_shape.IsNull()) {
@@ -199,35 +214,37 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 		for (auto& entity_part : parts) {
 			std::vector<taxonomy::style::ptr> entity_part_styles;
 			if (!select_face_styles(complete_face_styles, entity_part, entity_part_styles)) {
-				logger_.error("Opening subtraction face styles do not match source faces", entity);
-				return false;
-			}
-			face_style_sources entity_part_face_styles;
+                lost_styles("Opening subtraction face styles do not match source faces");
+                entity_part_styles.clear();
+            }
+            face_style_sources entity_part_face_styles;
 			if (!capture_face_styles(entity_part, entity_part_styles, entity_part_face_styles)) {
-				logger_.error("Opening subtraction face styles do not match source faces", entity);
-				return false;
-			}
+                lost_styles("Opening subtraction face styles do not match source faces");
+                entity_part_face_styles.clear();
+                entity_part_styles.clear();
+            }
 
-			bool is_manifold = util::is_manifold(entity_part);
+            bool is_manifold = util::is_manifold(entity_part);
 
-			if (!is_manifold && complete_shape.face_styles().empty()) {
-				// Sewing may replace source faces, so only use it when no per-face style provenance must survive.
+            if (!as_surface && !is_manifold && complete_shape.face_styles().empty()) {
+                // Sewing may replace source faces, so only use it when no per-face style provenance must survive.
 				// force sewing, edge identity might have been mudied by FixAdvFace.FixOrientation.MSG5 to fix interior loop winding order
                 NCollection_List<TopoDS_Shape> list;
                 ifcopenshell::geom::util::shape_to_face_list(entity_part, list);
                 ifcopenshell::geom::util::create_solid_from_faces(list, entity_part, settings_.get<settings::Precision>().get(), true);
 				if (!select_face_styles(entity_part_face_styles, entity_part, entity_part_styles)
 						|| !capture_face_styles(entity_part, entity_part_styles, entity_part_face_styles)) {
-					logger_.error("Opening subtraction could not preserve face styles while sewing source faces", entity);
-					return false;
-				}
+                    lost_styles("Opening subtraction could not preserve face styles while sewing source faces");
+                    entity_part_face_styles.clear();
+                    entity_part_styles.clear();
+                }
                 is_manifold = util::is_manifold(entity_part);
                 if (is_manifold) {
 					logger_.warning("GEO", 188, "Successfully sewed non-manifold first operand");
                 }
-			}
+            }
 
-			if (!is_manifold) {
+            if (!as_surface && !is_manifold) {
                 if (settings_.get<settings::MakeVolume>().get()) {
                     BOPAlgo_MakerVolume mv;
                     mv.AddArgument(entity_part);
@@ -244,9 +261,10 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
                             logger_.warning("GEO", 189, std::string("Sucessfully detected exterior volume to non-manifold first operand; shape is now ") + (is_manifold ? std::string("manifold") : std::string("non-manifold")));
 							if (!select_face_styles(entity_part_face_styles, entity_part_2, entity_part_styles)
 									|| !capture_face_styles(entity_part_2, entity_part_styles, entity_part_face_styles)) {
-								logger_.error("Opening subtraction could not preserve face styles while creating source volume", entity);
-								return false;
-							}
+                                lost_styles("Opening subtraction could not preserve face styles while creating source volume");
+                                entity_part_face_styles.clear();
+                                entity_part_styles.clear();
+                            }
                             entity_part = entity_part_2;
 						}
                     } catch (const Standard_Failure& e) {
@@ -258,18 +276,19 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
                 } else {
                     logger_.warning("GEO", 191, "Non-manifold first operand, use --make-volume to try and make manifold");
 				}
-			}
+            }
 
-			TopoDS_Shape entity_part_result;
+            TopoDS_Shape entity_part_result;
 			std::vector<taxonomy::style::ptr> entity_part_result_styles;
 
-			for (int as_shell = 0; as_shell < 2; ++as_shell) {
-				face_style_sources entity_part_face_styles;
+            for (int as_shell = as_surface ? 1 : 0; as_shell < 2; ++as_shell) {
+                face_style_sources entity_part_face_styles;
 				if (!capture_face_styles(entity_part, entity_part_styles, entity_part_face_styles)) {
-					logger_.error("Opening subtraction face styles do not match prepared source faces", entity);
-					return false;
-				}
-				TopoDS_Shape entity_shape_unlocated;
+                    lost_styles("Opening subtraction face styles do not match prepared source faces");
+                    entity_part_face_styles.clear();
+                    entity_part_styles.clear();
+                }
+                TopoDS_Shape entity_shape_unlocated;
 				if (as_shell) {
 					entity_shape_unlocated = entity_part;
 				} else {
@@ -280,10 +299,10 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 					if (!as_shell) {
 						continue;
 					}
-					logger_.error("Opening subtraction could not match prepared source faces", entity);
-					return false;
-				}
-				const auto& m = it3->placement()->ccomponents();
+                    lost_styles("Opening subtraction could not match prepared source faces");
+                    result_face_styles.clear();
+                }
+                const auto& m = it3->placement()->ccomponents();
 				// @todo
 				// if (entity_shape_gtrsf.Form() == gp_Other) {
 				// 	ifcopenshell::logger::root().message(ifcopenshell::logger::LOG_WARNING, "Applying non uniform transformation to:", entity);
@@ -319,19 +338,21 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 								intermediate_styles.reserve(face_sources.size());
 								for (int source : face_sources) {
 									if (source >= static_cast<int>(result_face_styles.size())) {
-										logger_.error("Opening subtraction returned an invalid face style source", entity);
-										return false;
-									}
-									intermediate_styles.push_back(source < 0 ? nullptr : result_face_styles[source]);
+                                        lost_styles("Opening subtraction returned an invalid face style source");
+                                        intermediate_styles.clear();
+                                        break;
+                                    }
+                                    intermediate_styles.push_back(source < 0 ? nullptr : result_face_styles[source]);
 								}
 								result_face_styles = std::move(intermediate_styles);
 							}
 							result = intermediate_result;
 						} else {
-							logger_.message(ifcopenshell::logger::LOG_ERROR, "GEO", 192, "Opening subtraction failed for " + boost::lexical_cast<std::string>(std::distance(jt, it)) + " openings", entity);
-						}
+                            logger_.message(ifcopenshell::logger::LOG_NOTICE, "GEO", 192, "Opening subtraction failed; action=retry_cut count=" + boost::lexical_cast<std::string>(std::distance(jt, it)), entity);
+                            return false;
+                        }
 
-						jt = it;
+                        jt = it;
 					}
 
 					if (it == opening_vector.end()) {
@@ -360,9 +381,9 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 				// For manifold first operands we're not even going to try if processing
 				// as loose faces gives a better result.
 				break;
-			}
+            }
 
-			if (is_multiple) {
+            if (is_multiple) {
 				B.Add(C, entity_part_result);
 				combined_face_styles.insert(
 					combined_face_styles.end(), entity_part_result_styles.begin(), entity_part_result_styles.end());
@@ -379,14 +400,17 @@ bool ifcopenshell::geom::open_cascade_kernel::convert_openings(const express::ba
 
 		if (!complete_shape.face_styles().empty()
 				&& combined_face_styles.size() != static_cast<size_t>(util::count(combined_result, TopAbs_FACE))) {
-			logger_.error("Opening subtraction face styles do not match result faces", entity);
-			return false;
-		}
-		cut_shapes.push_back(ifcopenshell::geom::conversion_result(
-			it3->ItemId(),
-			new open_cascade_shape(combined_result, std::move(combined_face_styles)),
-			it3->style_ptr()));
-	}
+            lost_styles("Opening subtraction face styles do not match result faces");
+            combined_face_styles.clear();
+        }
+        if (!styles_complete) {
+            combined_face_styles.clear();
+        }
+        cut_shapes.push_back(ifcopenshell::geom::conversion_result(
+            it3->ItemId(),
+            new open_cascade_shape(combined_result, std::move(combined_face_styles), complete_shape.source_closed(), styles_complete),
+            it3->style_ptr()));
+    }
 	return true;
 }
 

@@ -235,6 +235,7 @@ void ifcopenshell::geom::iterator::process_concurrently() {
 			ifcopenshell::logger& worker_logger = *worker_loggers_.back();
 			worker_logger.verbosity(logger_.verbosity());
 			worker_logger.output_format(logger_.output_format());
+			worker_logger.collect_diagnostics(logger_.collects_diagnostics());
 			worker_logger.print_performance_stats_on_element(logger_.print_performance_stats_on_element());
 			if (worker_logger.output_format() != ifcopenshell::logger::FMT_INMEMORY) {
 				worker_logger.set_output(static_cast<std::ostream*>(nullptr), static_cast<std::ostream*>(nullptr));

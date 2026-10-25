@@ -325,6 +325,7 @@ class iterator(ifcopenshell_wrapper.iterator):
         logger=None,
     ):
         self.settings = settings
+        original_logger = logger
         logger = ifcopenshell.logger_or_root(logger)
         if isinstance(file_or_filename, file):
             self.file = file
@@ -371,6 +372,10 @@ class iterator(ifcopenshell_wrapper.iterator):
         else:
             args = (geometry_library, self.settings, file_or_filename, num_threads)
             self.this = ifcopenshell_wrapper.construct_iterator(*args, *ifcopenshell.optional_logger_args(logger))
+
+        # logger_or_root returns a non-owning proxy; retain the original owner
+        # until the native iterator has finished flushing its worker logs.
+        self._logger = original_logger
 
     if has_occ:
 

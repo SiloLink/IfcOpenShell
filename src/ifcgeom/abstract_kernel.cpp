@@ -55,8 +55,10 @@ bool ifcopenshell::geom::kernels::abstract_kernel::convert(const taxonomy::ptr i
 		res = with_exception_handling(process_with_upgrade);
 	}
 
-	if (settings_.get<settings::CacheShapes>().get() && res) {
-		cache_.insert({ item, results });
+	// A partial conversion may omit Boolean operands. Such a result cannot
+	// satisfy a later complete conversion of the same taxonomy item.
+	if (settings_.get<settings::CacheShapes>().get() && res && !partial_success_is_success) {
+		cache_.insert({item, results});
 	}
 
 	return res;
@@ -65,6 +67,23 @@ bool ifcopenshell::geom::kernels::abstract_kernel::convert(const taxonomy::ptr i
 const ifcopenshell::geom::settings& ifcopenshell::geom::kernels::abstract_kernel::settings() const
 {
 	return settings_;
+}
+
+bool ifcopenshell::geom::kernels::abstract_kernel::convert_openings(const express::base& entity, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>& openings,
+	const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
+	conversion_mode_scope complete_cutters(*this, false);
+	std::vector<ifcopenshell::geom::conversion_result> candidate;
+	if (!convert_openings_impl(entity, openings, entity_shapes, entity_trsf, candidate)) {
+		return false;
+	}
+	for (const auto& result : candidate) {
+		if (!result.shape()) {
+			logger_.notice("Opening result has no shape; action=reject_cut backend=" + geometry_library_, entity);
+			return false;
+		}
+	}
+	cut_shapes.insert(cut_shapes.end(), std::make_move_iterator(candidate.begin()), std::make_move_iterator(candidate.end()));
+	return true;
 }
 
 bool ifcopenshell::geom::kernels::abstract_kernel::convert_impl(const taxonomy::collection::ptr collection, std::vector<ifcopenshell::geom::conversion_result>& r) {

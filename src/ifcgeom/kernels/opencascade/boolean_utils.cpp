@@ -2,6 +2,7 @@
 
 #include "ub_tree.h"
 #include "base_utils.h"
+#include "shape_healing_context.h"
 
 #include <BRepBuilderAPI_Copy.hxx>
 #include <TopExp_Explorer.hxx>
@@ -1250,17 +1251,24 @@ bool ifcopenshell::geom::util::boolean_operation(
 			if (!first_operand_face_sources) {
 				PERF("boolean operation: shape healing");
 
-				ShapeFix_Shape fix(r);
-				try {
-					fix.SetMaxTolerance(fuzz);
-					fix.Perform();
-					r = fix.Shape();
-				} catch (...) {
-					settings.log().error("GEO", 146, "Shape healing failed on boolean result");
-				}
-			}
+                ShapeFix_Shape fix(r);
+                Handle(shape_healing_context) context = new shape_healing_context;
+                context->ModeConsiderLocation() = fix.Context()->ModeConsiderLocation();
+                fix.SetContext(context);
+                try {
+                    fix.SetMaxTolerance(fuzz);
+                    fix.Perform();
+                    r = fix.Shape();
+                } catch (const cyclic_shape_replacement&) {
+                    // The Boolean result must be recomputed by another kernel, not
+                    // returned with an incomplete or cyclic healing context.
+                    throw;
+                } catch (...) {
+                    settings.log().error("GEO", 146, "Shape healing failed on boolean result");
+                }
+            }
 
-			{
+            {
 				PERF("boolean operation: shape analysis");
 
 				BRepCheck_Analyzer ana(r);

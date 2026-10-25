@@ -24,7 +24,7 @@ public:
 	virtual bool convert_impl(const taxonomy::solid::ptr, std::vector<ifcopenshell::geom::conversion_result>&);
 	virtual bool convert_impl(const taxonomy::extrusion::ptr, std::vector<ifcopenshell::geom::conversion_result>&);
 
-	virtual bool convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>&,
+	virtual bool convert_openings_impl(const express::base&, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>&,
 		const std::vector<ifcopenshell::geom::conversion_result>&, const ifcopenshell::geom::taxonomy::matrix4&, std::vector<ifcopenshell::geom::conversion_result>&);
 };
 

@@ -43,6 +43,12 @@ taxonomy::ptr mapping::map_impl(const IfcSchema::IfcFace& inst) {
 
 	if (face_surface) {
 		face->basis = map(face_surface.FaceSurface());
+        if (!face->basis) {
+#ifdef TAXONOMY_USE_NAKED_PTR
+            delete face;
+#endif
+            return nullptr;
+        }
         if (!face_surface.SameSense()) {
             // Make a copy for immutability
             face->basis = decltype(face->basis)(face->basis->clone_());

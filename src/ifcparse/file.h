@@ -102,6 +102,8 @@ private:
     ifcopenshell::file_open_status good_ = ifcopenshell::file_open_status::SUCCESS;
     std::reference_wrapper<ifcopenshell::logger> logger_;
     int progress_;
+    std::unordered_map<uint32_t, size_t> definition_offsets_;
+    size_t redundant_definitions_ = 0;
     ifcopenshell::unresolved_references references_to_resolve_;
     int yielded_header_instances_ = 0;
     bool yield_header_instances_ = true;
@@ -115,6 +117,8 @@ private:
 
   public:
 	bool coerce_attribute_count = true;
+    // Only enabled by a full file load, whose reader retains random access.
+    bool coalesce_duplicate_ids = false;
 
     operator bool() const {
         return good_ && lexer_ && !lexer_->stream->eof();

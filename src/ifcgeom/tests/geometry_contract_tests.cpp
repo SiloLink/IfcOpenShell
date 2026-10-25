@@ -1,11 +1,14 @@
 #include "ifcgeom/iterator.h"
 #include "ifcgeom/kernels/opencascade/opencascade_conversion_result.h"
+#include "ifcgeom/kernels/opencascade/opencascade_kernel.h"
 #include "ifcparse/instance_data.h"
 
 #include <atomic>
+#include <BRep_Builder.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <cctype>
-#include <cstdlib>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -13,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <TopoDS_Vertex.hxx>
 
 #if defined(__linux__)
 #include <dlfcn.h>
@@ -222,6 +226,38 @@ std::unique_ptr<ifcopenshell::file> fixture(const std::string& schema, int tasks
     return std::make_unique<ifcopenshell::file>(stream, static_cast<int>(text.size()));
 }
 
+void boolean_rejects_failed_operand(int failed_operand) {
+    class OperandKernel : public open_cascade_kernel {
+        int failed_operand_;
+        int calls_ = 0;
+
+      public:
+        OperandKernel(const Settings& settings, int failed_operand)
+            : open_cascade_kernel(settings), failed_operand_(failed_operand) {}
+        bool convert_impl(const taxonomy::solid::ptr solid, std::vector<conversion_result>& results) override {
+            ++calls_;
+            // A failed nested conversion can already have appended partial geometry.
+            results.emplace_back(solid->instance.id(), solid->matrix, new open_cascade_shape(BRepPrimAPI_MakeBox(1., 1., 1.).Shape()), nullptr);
+            return calls_ != failed_operand_;
+        }
+    };
+    auto file = fixture("IFC4");
+    auto boolean = taxonomy::make<taxonomy::boolean_result>();
+    boolean->operation = taxonomy::boolean_result::SUBTRACTION;
+    boolean->instance = file->instance_by_id(102);
+    for (int i = 0; i < 2; ++i) {
+        auto solid = taxonomy::make<taxonomy::solid>();
+        solid->instance = boolean->instance;
+        boolean->children.push_back(solid);
+    }
+    Settings settings;
+    OperandKernel kernel(settings, failed_operand);
+    kernel.partial_success_is_success = false;
+    std::vector<conversion_result> results;
+    require(!kernel.open_cascade_kernel::convert_impl(boolean, results), "Boolean accepted a failed operand's partial geometry");
+    require(results.empty(), "failed Boolean emitted a partial result");
+}
+
 void cache_settings(const std::string& schema) {
     auto file = fixture(schema);
     Settings settings;
@@ -374,7 +410,7 @@ class ControlledKernel : public kernels::abstract_kernel {
     }
     ~ControlledKernel() override { --control_->kernels; }
     bool supports_boolean_operations() const override { return false; }
-    bool convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>&, const std::vector<ifcopenshell::geom::conversion_result>&, const taxonomy::matrix4&, std::vector<ifcopenshell::geom::conversion_result>&) override {
+    bool convert_openings_impl(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>&, const std::vector<ifcopenshell::geom::conversion_result>&, const taxonomy::matrix4&, std::vector<ifcopenshell::geom::conversion_result>&) override {
         throw std::runtime_error("unexpected opening conversion");
     }
     abstract_kernel* clone(ifcopenshell::logger& logger) const override {
@@ -500,6 +536,8 @@ int main(int argc, char** argv) {
         }
     };
     run("cold-concurrent-entity-serialization", concurrent_entity_serialization);
+    run("boolean-failed-first-operand", [&]() { boolean_rejects_failed_operand(1); });
+    run("boolean-failed-second-operand", [&]() { boolean_rejects_failed_operand(2); });
     run("header-and-value-serialization", header_and_value_serialization);
     run("concurrent-loggers-plain", [&]() { concurrent_loggers(ifcopenshell::logger::FMT_PLAIN); });
     run("concurrent-loggers-inmemory", [&]() { concurrent_loggers(ifcopenshell::logger::FMT_INMEMORY); });

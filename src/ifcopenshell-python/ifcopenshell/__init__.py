@@ -56,6 +56,7 @@ Example:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -98,6 +99,29 @@ rocksdb_lazy_instance = file_module.rocksdb_lazy_instance
 decode_spf_string = ifcopenshell_wrapper.decode_spf_string
 encode_spf_string = ifcopenshell_wrapper.encode_spf_string
 get_log = ifcopenshell_wrapper.get_log
+# The SiloLink native behaviours the loaded binary provides, read before any file is opened.
+capabilities: frozenset[str] = frozenset(
+    json.loads(ifcopenshell_wrapper.silolink_capabilities())
+    if hasattr(ifcopenshell_wrapper, "silolink_capabilities")
+    else ()
+)
+
+
+def diagnostic_contract() -> dict[str, list[str]]:
+    """The diagnostic category and outcome names this native runtime emits."""
+    return json.loads(ifcopenshell_wrapper.diagnostic_contract())
+
+
+def collect_diagnostics(enabled: bool) -> None:
+    """Keep typed diagnostic events for take_diagnostics() in addition to the text log."""
+    ifcopenshell_wrapper.collect_diagnostics(enabled)
+
+
+def take_diagnostics() -> list[dict[str, str]]:
+    """Hand over the typed diagnostic events recorded since the last call."""
+    return json.loads(ifcopenshell_wrapper.take_diagnostics())
+
+
 logger = ifcopenshell_wrapper.logger if hasattr(ifcopenshell_wrapper, "logger") else None
 if hasattr(ifcopenshell_wrapper, "logger_or_root"):
     logger_or_root = ifcopenshell_wrapper.logger_or_root

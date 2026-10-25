@@ -36,6 +36,104 @@ using ifcopenshell::logger;
 
 namespace {
 
+std::string encode_diagnostic(const ifcopenshell::diagnostic_fields& fields) {
+    boost::property_tree::ptree event;
+    for (const auto& field : fields) {
+        event.put(field.first, field.second);
+    }
+    std::ostringstream encoded;
+    boost::property_tree::write_json(encoded, event, false);
+    auto text = encoded.str();
+    if (!text.empty() && text.back() == '\n') {
+        text.pop_back();
+    }
+    return text;
+}
+
+std::string quoted_list(const std::vector<std::string>& names) {
+    std::string encoded = "[";
+    for (const auto& name : names) {
+        if (encoded.size() > 1) {
+            encoded += ",";
+        }
+        encoded += "\"" + name + "\"";
+    }
+    return encoded + "]";
+}
+
+} // namespace
+
+const std::vector<std::string>& ifcopenshell::diagnostic_categories() {
+    static const std::vector<std::string> categories = {
+        "step_deduplicated", "object_skipped", "opening_incomplete", "boolean_partial",
+        "geometry_partial", "material_degraded", "geometry_missing", "surface_recovery_failed",
+        "fallback_recovered", "geometry_error", "opening_geometry_excluded",
+    };
+    return categories;
+}
+
+const std::vector<std::string>& ifcopenshell::diagnostic_outcomes() {
+    static const std::vector<std::string> outcomes = {"missing", "partial", "degraded", "recovered"};
+    return outcomes;
+}
+
+std::string ifcopenshell::diagnostic_contract_json() {
+    return "{\"categories\":" + quoted_list(diagnostic_categories()) + ",\"outcomes\":" + quoted_list(diagnostic_outcomes()) + "}";
+}
+
+std::string ifcopenshell::encode_diagnostics_json(const std::vector<diagnostic_fields>& events) {
+    std::string encoded = "[";
+    for (const auto& fields : events) {
+        if (encoded.size() > 1) {
+            encoded += ",";
+        }
+        encoded += encode_diagnostic(fields);
+    }
+    return encoded + "]";
+}
+
+void logger::diagnostic(severity type, const diagnostic_fields& fields) {
+    const auto category = fields.find("category");
+    const auto outcome = fields.find("outcome");
+    const auto& categories = diagnostic_categories();
+    const auto& outcomes = diagnostic_outcomes();
+    if (category == fields.end() || outcome == fields.end() ||
+        std::find(categories.begin(), categories.end(), category->second) == categories.end() ||
+        std::find(outcomes.begin(), outcomes.end(), outcome->second) == outcomes.end()) {
+        // The event is still delivered so no decision is hidden; the error makes
+        // the vocabulary drift visible to the contract tests and the consumer.
+        message(LOG_ERROR, std::string(), "Diagnostic outside the shared contract: category=" +
+            (category == fields.end() ? std::string("<missing>") : category->second) + " outcome=" +
+            (outcome == fields.end() ? std::string("<missing>") : outcome->second), express::base(), false);
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (collect_diagnostics_) {
+            diagnostics_.push_back(fields);
+        }
+    }
+    // Machine events must not depend on an unescaped, user-authored GlobalId
+    // in the human-readable prefix. STEP identities are in the JSON payload.
+    message(type, std::string(), "PARSER_EVENT_V1 " + encode_diagnostic(fields), express::base(), false);
+}
+
+void logger::collect_diagnostics(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    collect_diagnostics_ = enabled;
+    if (!enabled) {
+        diagnostics_.clear();
+    }
+}
+
+std::vector<ifcopenshell::diagnostic_fields> logger::take_diagnostics() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<diagnostic_fields> taken;
+    taken.swap(diagnostics_);
+    return taken;
+}
+
+namespace {
+
 std::string get_time(bool with_milliseconds = false) {
     std::ostringstream oss;
     time_t now = time(nullptr);
@@ -232,7 +330,7 @@ void logger::message(logger::severity type, const char (&code_prefix)[4], uint16
     message(type, code_prefix, code_number, std::string(exception.what()), instance);
 }
 
-void logger::message(logger::severity type, const std::string& code, const std::string& text, const express::base& instance) {
+void logger::message(logger::severity type, const std::string& code, const std::string& text, const express::base& instance, bool include_product) {
     if (type < verbosity_) {
         return;
     }
@@ -256,20 +354,21 @@ void logger::message(logger::severity type, const std::string& code, const std::
         max_severity_ = type;
     }
 
+    const auto product = include_product ? current_product() : express::base();
     if (format_ == FMT_INMEMORY) {
-        log_messages_.emplace_back(type, code, get_time(), text, instance, current_product());
+        log_messages_.emplace_back(type, code, get_time(), text, instance, product);
     } else if (((log2_ != nullptr) || (wlog2_ != nullptr))) {
         if (format_ == FMT_PLAIN) {
             if (log2_ != nullptr) {
-                plain_text_message(*log2_, current_product(), type, code, text, instance);
+                plain_text_message(*log2_, product, type, code, text, instance);
             } else if (wlog2_ != nullptr) {
-                plain_text_message(*wlog2_, current_product(), type, code, text, instance);
+                plain_text_message(*wlog2_, product, type, code, text, instance);
             }
         } else if (format_ == FMT_JSON) {
             if (log2_ != nullptr) {
-                json_message(*log2_, current_product(), type, code, text, instance);
+                json_message(*log2_, product, type, code, text, instance);
             } else if (wlog2_ != nullptr) {
-                json_message(*wlog2_, current_product(), type, code, text, instance);
+                json_message(*wlog2_, product, type, code, text, instance);
             }
         }
     }
@@ -342,6 +441,13 @@ void logger::append(logger& other) {
                 log_stream_ << log;
             }
         }
+    }
+
+    if (!other.diagnostics_.empty()) {
+        if (collect_diagnostics_) {
+            diagnostics_.insert(diagnostics_.end(), std::make_move_iterator(other.diagnostics_.begin()), std::make_move_iterator(other.diagnostics_.end()));
+        }
+        other.diagnostics_.clear();
     }
 
     other.log_stream_.str(std::string());

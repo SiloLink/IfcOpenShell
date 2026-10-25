@@ -10,6 +10,36 @@ schema and mapping plugins from the configured build. When running outside the
 installed plugin directory, set `IFCGEOM_CONTRACT_PLUGIN_DIR` to the directory
 containing those plugins. An optional argument filters test names.
 
+`ifcgeom_boolean_contract_tests` (also non-default) covers the OpenCASCADE
+Boolean crash-safety contracts: the healing context rejects cyclic ShapeFix
+replacements, by value and by containment and with location mode on, while
+shared sub-shapes, finite location changes and long replacement chains still
+heal; in complete mode, a Boolean whose first or second operand fails to convert
+returns failure without emitting partial geometry. Partial mode skips failed
+operands, but subtraction still requires a valid first operand. It takes the
+same plugin directory variable and name filter.
+
+`ifcgeom_cgal_opening_contract_tests` is a non-default target available with
+ordinary CGAL. It uses actual box, open-shell, collection and nested Boolean
+conversion to check that complete opening conversion rejects a missing cutter
+or operand without publishing partial output. A valid nested `A-B` cutter
+retains the expected host volume. The complete-cutter contract now lives in
+`abstract_kernel::convert_openings`, so a kernel called directly in partial
+mode rejects an incomplete cutter too and restores the caller's mode on every
+exit. The hybrid check verifies complete conversion and policy restoration
+across repeated calls, including after a partial conversion with caching
+enabled. Complete conversions remain reusable from the cache. It uses the same
+plugin directory variable and filter.
+
+Only successful complete-mode conversions populate the shape cache. Partial
+conversions may omit operands, so their output must not satisfy a later complete
+conversion of the same item. A complete cached result can serve either mode.
+
+```sh
+cmake --build build --target ifcgeom_cgal_opening_contract_tests
+IFCGEOM_CONTRACT_PLUGIN_DIR=/path/to/build/plugins build/ifcgeom/ifcgeom_cgal_opening_contract_tests
+```
+
 The cold serialization test runs before any file is constructed. Eight callers
 serialize entities and entity references concurrently, exercising the first-use
 path used by worker logs. Header entities and typed values retain their STEP

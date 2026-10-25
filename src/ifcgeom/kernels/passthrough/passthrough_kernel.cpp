@@ -297,7 +297,7 @@ bool passthrough_kernel::convert_impl(const taxonomy::extrusion::ptr extrusion, 
 	return true;
 }
 
-bool passthrough_kernel::convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>&,
+bool passthrough_kernel::convert_openings_impl(const express::base&, const std::vector<std::pair<taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>&,
 	const std::vector<ifcopenshell::geom::conversion_result>&, const ifcopenshell::geom::taxonomy::matrix4&, std::vector<ifcopenshell::geom::conversion_result>&) {
 	return false;
 }

@@ -49,14 +49,14 @@ namespace {
 ifcopenshell::geom::open_cascade_shape::open_cascade_shape(const TopoDS_Shape& shape)
 	: shape_(shape) {}
 
-ifcopenshell::geom::open_cascade_shape::open_cascade_shape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles)
-	: shape_(shape), face_styles_(std::move(face_styles)) {}
+ifcopenshell::geom::open_cascade_shape::open_cascade_shape(const TopoDS_Shape& shape, std::vector<taxonomy::style::ptr> face_styles, std::optional<bool> source_closed, bool face_styles_complete)
+    : shape_(shape), face_styles_(std::move(face_styles)), source_closed_(source_closed), face_styles_complete_(face_styles_complete) {}
 
 ifcopenshell::geom::open_cascade_shape::open_cascade_shape(TopoDS_Shape&& shape)
 	: shape_(std::move(shape)) {}
 
-ifcopenshell::geom::open_cascade_shape::open_cascade_shape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles)
-	: shape_(std::move(shape)), face_styles_(std::move(face_styles)) {}
+ifcopenshell::geom::open_cascade_shape::open_cascade_shape(TopoDS_Shape&& shape, std::vector<taxonomy::style::ptr> face_styles, std::optional<bool> source_closed, bool face_styles_complete)
+    : shape_(std::move(shape)), face_styles_(std::move(face_styles)), source_closed_(source_closed), face_styles_complete_(face_styles_complete) {}
 
 const TopoDS_Shape& ifcopenshell::geom::open_cascade_shape::shape() const {
 	return shape_;
@@ -71,7 +71,7 @@ std::string_view ifcopenshell::geom::open_cascade_shape::backend_id() const {
 }
 
 ifcopenshell::geom::conversion_result_shape* ifcopenshell::geom::open_cascade_shape::clone() const {
-	return new open_cascade_shape(shape_, face_styles_);
+    return new open_cascade_shape(shape_, face_styles_, source_closed_, face_styles_complete_);
 }
 
 void ifcopenshell::geom::open_cascade_shape::triangulate(ifcopenshell::geom::settings settings, const ifcopenshell::geom::taxonomy::matrix4& place, ifcopenshell::geom::triangulation* t, int item_id, int surface_style_id, ifcopenshell::logger& logger) const {
@@ -517,7 +517,7 @@ conversion_result_shape* ifcopenshell::geom::open_cascade_shape::wrap_in_compoun
 	BRep_Builder builder;
 	builder.MakeCompound(compound);
 	builder.Add(compound, shape_);
-	return new open_cascade_shape(std::move(compound), face_styles_);
+    return new open_cascade_shape(std::move(compound), face_styles_, source_closed_, face_styles_complete_);
 }
 
 std::vector<conversion_result_shape*> ifcopenshell::geom::open_cascade_shape::vertices()
@@ -613,7 +613,7 @@ std::pair<opaque_coordinate<3>, opaque_coordinate<3>> ifcopenshell::geom::open_c
 
 conversion_result_shape* ifcopenshell::geom::open_cascade_shape::moved(ifcopenshell::geom::taxonomy::matrix4::ptr t) const
 {
-	return new open_cascade_shape(ifcopenshell::geom::util::apply_transformation(shape_, *t), face_styles_);
+    return new open_cascade_shape(ifcopenshell::geom::util::apply_transformation(shape_, *t), face_styles_, source_closed_, face_styles_complete_);
 }
 
 namespace {

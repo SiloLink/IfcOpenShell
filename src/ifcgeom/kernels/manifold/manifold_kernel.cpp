@@ -1672,7 +1672,7 @@ bool manifold_kernel::convert_impl(const taxonomy::boolean_result::ptr br, std::
 	return true;
 }
 
-bool manifold_kernel::convert_openings(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>& openings, const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
+bool manifold_kernel::convert_openings_impl(const express::base&, const std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>>& openings, const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes) {
 	std::vector<manifold::Manifold> opening_operands;
 	auto entity_bbox = results_bbox(entity_shapes);
 	if (!entity_bbox) {

@@ -146,7 +146,7 @@ public:
 	virtual bool convert_impl(const ifcopenshell::geom::taxonomy::loft::ptr, std::vector<ifcopenshell::geom::conversion_result>&);
 	virtual bool convert_impl(const ifcopenshell::geom::taxonomy::sweep_along_curve::ptr, std::vector<ifcopenshell::geom::conversion_result>&);
 
-	virtual bool convert_openings(const express::base& entity, const std::vector<std::pair<ifcopenshell::geom::taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
+	virtual bool convert_openings_impl(const express::base& entity, const std::vector<std::pair<ifcopenshell::geom::taxonomy::ptr, ifcopenshell::geom::taxonomy::matrix4>>& openings,
 		const std::vector<ifcopenshell::geom::conversion_result>& entity_shapes, const ifcopenshell::geom::taxonomy::matrix4& entity_trsf, std::vector<ifcopenshell::geom::conversion_result>& cut_shapes);
 	virtual bool unify_shapes(const std::vector<ifcopenshell::geom::conversion_result>& input, std::vector<ifcopenshell::geom::conversion_result>& output);
 
