@@ -110,7 +110,8 @@ BUNDLED_WHEELS += "cjio >=0.8, <0.10"
 # Required in general for sorting all sorts of stuff in a nice way
 BUNDLED_WHEELS += natsort
 # Provides express rule validation for ifcopenshell.validate
-BUNDLED_WHEELS += pytest
+# Keep compatible with Bonsai's pytest-bdd test runner.
+BUNDLED_WHEELS += "pytest<9.2"
 # Provides Brickschema functionality
 # Is not platform specific but has platform specific dependencies.
 # The SQLAlchemy store must be 0.7.1 or later (SQLAlchemy 2.1, rdflib 7, and the

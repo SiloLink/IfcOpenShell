@@ -42,4 +42,5 @@ IFC_PARSE_API const char *IFCOPENSHELL_VERSION = STRINGIFY(IFCOPENSHELL_VERSION_
 IFC_PARSE_API const char *SILOLINK_CAPABILITIES =
     "[\"step_definition_coalescing\",\"open_error_gil_restored\","
     "\"structured_diagnostics\",\"typed_diagnostics\",\"complete_opening_cutters\","
-    "\"partial_geometry_recovery\",\"mapped_occurrence_openings\",\"iterator_logger_retained\"]";
+    "\"partial_geometry_recovery\",\"mapped_occurrence_openings\",\"iterator_logger_retained\","
+    "\"deferred_opening_recovery_v1\"]";

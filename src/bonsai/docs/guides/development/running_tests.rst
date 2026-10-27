@@ -7,11 +7,14 @@ Bonsai has three layers of tests for each of its three technology layers:
 2. **Tool tests**: low-level concrete unit tests dependent on Blender
 3. **UI tests**: high-level integration UI and smoke tests dependent on Blender
 
-These tests use ``pytest`` as the test framework and runner, so install it:
+These tests use ``pytest`` as the test framework and runner. Install the
+development dependency group to keep pytest compatible with its plugins
+(requires pip 25.1 or later):
 
 .. code-block:: bash
 
-    pip install pytest
+    cd src/bonsai/
+    python -m pip install --group dev
 
 All development is expected to use test driven development, and so we expect
 test coverage to be 100% where it is technically possible to test.
@@ -55,7 +58,7 @@ following dependencies:
 
 .. code-block:: bash
 
-    pip install pytest-blender
+    # pytest-blender is included in the development dependency group above.
     # Check that "Blender" is in your system's path
     blender
 
@@ -90,6 +93,9 @@ Blender:
    The ``scripts/setup_pytest.py`` may not work for all operating systems and
    installation environments. In this case, you may be required to install the
    dependencies manually.
+
+   Install ``"pytest<9.2" pytest-bdd pytest-blender pygments`` together in one
+   pip command. pytest-bdd uses fixture internals removed in pytest 9.2.
 
    Please be aware that some Blender may come packaged with its own Python,
    which may be separate to the Python installation on your system. Be sure to

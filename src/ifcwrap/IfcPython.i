@@ -177,6 +177,7 @@
 %ignore MaxVoidsPerElement;
 %ignore IteratorOutput;
 %ignore DisableOpeningSubtractions;
+%ignore OpeningRecoveryMode;
 %ignore ApplyDefaultMaterials;
 %ignore DontEmitNormals;
 %ignore GenerateUvs;

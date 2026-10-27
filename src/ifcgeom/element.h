@@ -77,6 +77,14 @@ namespace ifcopenshell::geom {
 		const express::entity product_;
 		std::vector<const ifcopenshell::geom::element*> _parents;
 		std::vector<std::shared_ptr<const ifcopenshell::geom::element>> _parent_storage;
+		std::vector<int> _deferred_opening_ids;
+		int _deferred_opening_representation_id = 0;
+
+		friend class converter;
+		void set_deferred_openings(std::vector<int> ids, int representation_id) {
+			_deferred_opening_ids = std::move(ids);
+			_deferred_opening_representation_id = _deferred_opening_ids.empty() ? 0 : representation_id;
+		}
 
 		friend class iterator;
 		void set_parents(std::vector<std::unique_ptr<ifcopenshell::geom::element>>&& newparents) {
@@ -122,6 +130,10 @@ namespace ifcopenshell::geom {
 		const ifcopenshell::geom::transformation& transformation() const { return _transformation; }
 		const express::entity& product() const { return product_; }
 		const std::vector<const ifcopenshell::geom::element*>& parents() const { return _parents; }
+		// Pending recovery is not a final geometry diagnostic. Consumers must either
+		// replace this representation or explicitly report its retained uncut host.
+		const std::vector<int>& deferred_opening_ids() const { return _deferred_opening_ids; }
+		int deferred_opening_representation_id() const { return _deferred_opening_representation_id; }
 		void SetParents(std::vector<const ifcopenshell::geom::element*>& newparents) {
 			_parent_storage.clear();
 			_parents = newparents;

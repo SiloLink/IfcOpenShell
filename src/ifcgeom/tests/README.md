@@ -5,6 +5,27 @@ concurrent readers, Iterator ownership, startup failures, early destruction,
 paused consumers, concurrent worker logging and first-call entity serialization.
 They require OpenCASCADE and use in-memory IFC fixtures.
 
+`ifcgeom_deferred_opening_tests` covers the internal `opening-recovery-mode`
+policy. `inline` preserves the default batch-then-individual behavior. `defer`
+performs the same batch attempt, but after failure returns the original host
+with `deferred_opening_ids()` and `deferred_opening_representation_id()` instead
+of attempting individual cuts. `individual` runs only the individual cuts and
+is intended for a separately bounded worker recovering that host/representation.
+The native call itself has no deadline or cancellation guarantee, including
+the initial batch. Consumers must supervise the recovery process externally.
+
+Pending metadata survives native, triangulated and serialized element copies.
+It is not an `opening_incomplete` or `fallback_recovered` diagnostic: the
+consumer must publish either the validated recovery result or retained base
+geometry with explicit incomplete-opening diagnostics. Opening mapping failures
+remain final diagnostics because no cutter is available to retry. Consumers
+must require capability `deferred_opening_recovery_v1` before using this policy.
+The controlled-kernel tests check exact call sequences, failed-output discard,
+mapping failures and per-representation identity. The corresponding Python API
+tests are `test/geom/test_deferred_opening_recovery.py` and run each fixture in
+a process with a 30-second limit. The C++ target uses the same plugin-directory
+variable described below.
+
 Build the non-default `ifcgeom_contract_tests` target. The test executable uses
 schema and mapping plugins from the configured build. When running outside the
 installed plugin directory, set `IFCGEOM_CONTRACT_PLUGIN_DIR` to the directory
