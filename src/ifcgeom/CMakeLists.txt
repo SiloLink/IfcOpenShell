@@ -75,6 +75,11 @@ if(WITH_OPENCASCADE AND NOT WASM_BUILD)
     target_link_libraries(ifcgeom_hybrid_contract_tests PRIVATE
         IfcGeom geometry_kernel_opencascade ${OpenCASCADE_LIBRARIES})
     add_dependencies(ifcgeom_hybrid_contract_tests ${schema_libraries} ${mapping_libraries})
+
+    add_executable(ifcgeom_deferred_opening_tests EXCLUDE_FROM_ALL tests/deferred_opening_tests.cpp)
+    target_link_libraries(ifcgeom_deferred_opening_tests PRIVATE
+        IfcGeom geometry_kernel_opencascade ${OpenCASCADE_LIBRARIES})
+    add_dependencies(ifcgeom_deferred_opening_tests ${schema_libraries} ${mapping_libraries})
 endif()
 
 if(WITH_OPENCASCADE AND NOT WASM_BUILD)

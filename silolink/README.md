@@ -9,7 +9,7 @@
 
 ### 快速开始：构建自定义 wheel（Linux py311）
 
-目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.4`：
+目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.5`：
 
 - Rocky Linux 9 builder，产物要求 GLIBC 2.34+（`manylinux_2_34_x86_64`）
 - upstream `nix/build-all.py`
@@ -44,6 +44,12 @@
 重建成功前保留原 locator，失败时释放临时副本，避免析构访问已释放内存。
 修正在构建目录生成独立头文件，不修改系统 CGAL；不改变几何精度或降级
 策略，也不把失败的布尔运算视为完整成功。
+
+`.5` 增加内部设置 `opening-recovery-mode`（`inline` / `defer` / `individual`）
+和元素上的待恢复开洞标识：批量开洞失败后，`defer` 返回未切割的有效宿主及
+待恢复的开洞与 representation 编号，`individual` 只做逐个切割，供 Parser 在
+独立、可终止的进程中按宿主限时重试。能力名 `deferred_opening_recovery_v1`。
+默认 `inline` 行为、几何精度、材质和诊断词汇不变。
 
 Python wrapper、geometry/parse 库和 native plugins 必须从同一源码一起
 构建、打包；不可把不同源码修订的二进制、内部 C++ 类型或库混用。

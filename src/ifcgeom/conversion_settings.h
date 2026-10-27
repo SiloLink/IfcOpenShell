@@ -267,6 +267,12 @@ namespace ifcopenshell {
 				static constexpr bool defaultvalue = false;
 			};
 
+			struct OpeningRecoveryMode : public SettingBase<OpeningRecoveryMode, std::string, true> {
+				static constexpr const char* const name = "opening-recovery-mode";
+				static constexpr const char* const description = "Internal opening recovery policy: inline, defer, or individual.";
+				static constexpr const char* const defaultvalue = "inline";
+			};
+
 			struct MaxVoidsPerElement : public SettingBase<MaxVoidsPerElement, int> {
                 static constexpr const char* const name = "max-voids-per-element";
                 static constexpr const char* const description = "Specifies the maximum number of voids that will be processed per element. 0 means unlimited. No voids will be processed for elements with more voids.";
@@ -930,6 +936,7 @@ using geometry_setting_types = std::tuple<
 			settings_detail::ContextPriorities,
 			settings_detail::IteratorOutput,
 			settings_detail::DisableOpeningSubtractions,
+			settings_detail::OpeningRecoveryMode,
 			settings_detail::MaxVoidsPerElement,
 			settings_detail::ApplyDefaultMaterials,
 			settings_detail::DontEmitNormals,
@@ -1034,6 +1041,7 @@ using geometry_setting_types = std::tuple<
 			using ContextPriorities = settings_detail::ContextPriorities;
 			using IteratorOutput = settings_detail::IteratorOutput;
 			using DisableOpeningSubtractions = settings_detail::DisableOpeningSubtractions;
+			using OpeningRecoveryMode = settings_detail::OpeningRecoveryMode;
 			using MaxVoidsPerElement = settings_detail::MaxVoidsPerElement;
 			using ApplyDefaultMaterials = settings_detail::ApplyDefaultMaterials;
 			using DontEmitNormals = settings_detail::DontEmitNormals;

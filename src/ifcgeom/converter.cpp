@@ -8,6 +8,10 @@ ifcopenshell::geom::converter::converter(std::unique_ptr<ifcopenshell::geom::ker
 	: kernel_(std::move(geometry_library))
 	, logger_(logger)
 {
+	const auto recovery_mode = settings.get<settings::OpeningRecoveryMode>().get();
+	if (recovery_mode != "inline" && recovery_mode != "defer" && recovery_mode != "individual") {
+		throw std::runtime_error("Invalid opening-recovery-mode: " + recovery_mode);
+	}
 	mapping_ = impl::mapping_implementations().construct(file, settings, logger_);
 	// Mapping reads unit information and tolerance and applies to settings
 	settings_ = mapping_->settings();
@@ -29,6 +33,7 @@ ifcopenshell::geom::native_element* ifcopenshell::geom::converter::create_brep_f
 
 	ifcopenshell::geom::native* shape;
 	std::vector<ifcopenshell::geom::conversion_result> shapes;
+	std::vector<int> deferred_opening_ids;
 
 	if (!kernel_->convert(representation_node, shapes)) {
 		return 0;
@@ -225,18 +230,30 @@ ifcopenshell::geom::native_element* ifcopenshell::geom::converter::create_brep_f
         };
         if (opening_items.empty()) {
             opened_shapes = shapes;
-        } else if (!cut(opening_items, shapes, opened_shapes)) {
-            retried_batch = true;
-            opened_shapes = shapes;
-            for (size_t i = 0; i < opening_items.size(); ++i) {
-                std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> single{opening_items[i]};
-                std::vector<ifcopenshell::geom::conversion_result> next;
-                if (cut(single, opened_shapes, next)) {
-                    opened_shapes = std::move(next);
+        } else {
+            const auto recovery_mode = settings_.get<settings::OpeningRecoveryMode>().get();
+            // The recovery worker already observed the failed batch. It must not
+            // repeat that potentially expensive operation before individual cuts.
+            const bool needs_recovery = recovery_mode == "individual" || !cut(opening_items, shapes, opened_shapes);
+            if (needs_recovery) {
+                opened_shapes = shapes;
+                if (recovery_mode == "defer") {
+                    for (const auto& opening : mapped_openings) {
+                        deferred_opening_ids.push_back(opening.id());
+                    }
                 } else {
-                    ++skipped_openings;
-                    skipped(mapped_openings[i], "all_complete_cut_attempts_failed", "skip_cut");
-                    logger_.warning("Opening subtraction failed; action=skip_cut outcome=incomplete host=#" + std::to_string(product.id()), mapped_openings[i]);
+                    retried_batch = true;
+                    for (size_t i = 0; i < opening_items.size(); ++i) {
+                        std::vector<std::pair<taxonomy::ptr, taxonomy::matrix4>> single{opening_items[i]};
+                        std::vector<ifcopenshell::geom::conversion_result> next;
+                        if (cut(single, opened_shapes, next)) {
+                            opened_shapes = std::move(next);
+                        } else {
+                            ++skipped_openings;
+                            skipped(mapped_openings[i], "all_complete_cut_attempts_failed", "skip_cut");
+                            logger_.warning("Opening subtraction failed; action=skip_cut outcome=incomplete host=#" + std::to_string(product.id()), mapped_openings[i]);
+                        }
+                    }
                 }
             }
         }
@@ -324,6 +341,7 @@ ifcopenshell::geom::native_element* ifcopenshell::geom::converter::create_brep_f
 		std::shared_ptr<ifcopenshell::geom::native>(shape),
 		product
 	);
+	elem->set_deferred_openings(std::move(deferred_opening_ids), representation_node->instance.id());
 
 	/*
 	// @todo
