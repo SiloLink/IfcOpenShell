@@ -26,7 +26,8 @@ Issues = "https://github.com/IfcOpenShell/IfcOpenShell/issues"
 [dependency-groups]
 # Test tooling for `make test-*` (pytest runs inside Blender for tool/bim).
 dev = [
-  "pytest",
+  # pytest-bdd uses fixture internals removed in pytest 9.2.
+  "pytest<9.2",
   "pytest-blender",
   "pytest-bdd",
   "fake-bpy-module-latest",
@@ -66,7 +67,7 @@ type-check = [
   "pygments",
   "pyradiance",
   "pystache",
-  "pytest",
+  "pytest<9.2",
   "pytest_bdd",
   "pytest_blender",
   "python-dateutil",
