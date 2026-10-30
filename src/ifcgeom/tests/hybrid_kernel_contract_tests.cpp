@@ -373,6 +373,17 @@ int face_style_contracts(ifcopenshell::file& file) {
         if (kernel.convert(item, results) != expected || (!expected && !results.empty())) {
             throw std::runtime_error(std::string("face style contract failed: ") + label);
         }
+        if (expected) {
+            bool degraded = false;
+            for (const auto& r : results) {
+                for (const auto& event : r.diagnostics()) {
+                    degraded = degraded || event.at("category") == "material_degraded";
+                }
+            }
+            if (degraded != fallback) {
+                throw std::runtime_error(std::string("face style diagnostic contract failed: ") + label);
+            }
+        }
         if (fallback) {
             for (const auto& r : results) {
                 if (!r.shape()->face_styles().empty() || r.shape()->num_faces() != 1 ||
@@ -429,6 +440,34 @@ int face_style_contracts(ifcopenshell::file& file) {
     check("unstyled surviving face",
           {conversion_result(10, new open_cascade_shape(two_faces, {red, nullptr}))},
           true);
+
+    check("mixed explicit and inherited styles", {result(10, {})}, true, true);
+    styled->children[1]->surface_style = red;
+    red->transparency = 0.375;
+    for (const auto& object_style : {taxonomy::style::ptr(), foreign}) {
+        settings settings;
+        int calls = 0;
+        auto shape = new open_cascade_shape(two_faces);
+        conversion_result input(10, shape);
+        input.setStyle(object_style);
+        std::vector<std::unique_ptr<abstract_kernel>> backends;
+        backends.emplace_back(std::make_unique<ControlledKernel>(
+            settings, Outcome::success, calls, 0, std::vector<conversion_result>{input}));
+        hybrid_kernel kernel("hybrid-controlled", &file, settings, std::move(backends));
+        std::vector<conversion_result> uniform;
+        if (!kernel.convert(item, uniform) || uniform.size() != 1 || calls != 1 ||
+            uniform.front().shape().get() != shape || uniform.front().style_ptr() != red ||
+            !uniform.front().diagnostics().empty()) {
+            throw std::runtime_error("uniform face material was lost, degraded or changed topology");
+        }
+        ++checks;
+    }
+    check("foreign styles are not replaced by uniform style", {result(10, {foreign})}, true, true);
+    check("incomplete provenance stays degraded",
+          {conversion_result(10, new open_cascade_shape(face, {}, false, false))},
+          true,
+          true);
+    styled->children[1]->surface_style = nullptr;
 
     bool complete = false;
     for (bool capable : {true, false}) {

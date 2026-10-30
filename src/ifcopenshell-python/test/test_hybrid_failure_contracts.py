@@ -77,6 +77,45 @@ def styled_wall(degenerate, entire_fragment_degenerate=False):
     return model, wall, fragment, slab
 
 
+@pytest.mark.parametrize("kernel", ["hybrid-cgal-simple", "hybrid-cgal", HYBRID])
+@pytest.mark.parametrize("entrypoint", ["create_shape", "iterator"])
+def test_uniform_face_colours_preserve_opacity_and_override_object_style(kernel, entrypoint):
+    model, wall, fragment, slab = styled_wall(False)
+    fragment.HasColours[0].ColourIndex = (1, 1)
+    green = model.createIfcColourRgb(None, 0.0, 1.0, 0.0)
+    shading = model.createIfcSurfaceStyleShading(green, 0.0)
+    style = model.createIfcSurfaceStyle("Object colour", "BOTH", (shading,))
+    for item in (fragment, slab):
+        model.createIfcStyledItem(item, (style,), None)
+    settings = ifcopenshell.geom.settings()
+    settings.set("apply-default-materials", False)
+    iterator = None
+    if entrypoint == "create_shape":
+        shape = ifcopenshell.geom.create_shape(settings, wall, geometry_library=kernel)
+    else:
+        iterator = ifcopenshell.geom.iterator(settings, model, include=[wall], num_threads=2, geometry_library=kernel)
+        assert iterator.initialize()
+        shape = iterator.get()
+
+    geometry = shape.geometry
+    vertices = ifcopenshell.util.shape.get_vertices(geometry)
+    faces = ifcopenshell.util.shape.get_faces(geometry)
+    items = ifcopenshell.util.shape.get_faces_representation_item_ids(geometry)
+    colours = ifcopenshell.util.shape.get_material_colors(geometry)
+    material_ids = ifcopenshell.util.shape.get_faces_material_style_ids(geometry)
+    assert np.isfinite(vertices).all()
+    assert len(faces) == 15
+    assert list(items).count(fragment.id()) == 3
+    assert list(items).count(slab.id()) == 12
+    for face, item_id, material_id in zip(faces, items, material_ids):
+        assert material_id >= 0
+        expected = (1.0, 0.0, 0.0, 0.6) if item_id == fragment.id() else (0.0, 0.0, 1.0, 0.8)
+        np.testing.assert_allclose(colours[material_id], expected)
+        assert np.all(vertices[face, 0] <= 1.0) if item_id == fragment.id() else np.all(vertices[face, 0] >= 2.0)
+    if iterator is not None:
+        assert not iterator.next()
+
+
 @pytest.mark.parametrize("degenerate", [False, True])
 @pytest.mark.parametrize("entrypoint", ["create_shape", "iterator"])
 def test_hybrid_preserves_surviving_geometry_and_its_face_colours(degenerate, entrypoint):

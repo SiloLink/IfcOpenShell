@@ -9,7 +9,7 @@
 
 ### 快速开始：构建自定义 wheel（Linux py311）
 
-目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.5`：
+目标是基于钉住的 upstream `261de82d5ab5653907dd216ae3e27384b86d4fda`（0.9.1）source 构建 `ifcopenshell==0.9.1+silolink.6`：
 
 - Rocky Linux 9 builder，产物要求 GLIBC 2.34+（`manylinux_2_34_x86_64`）
 - upstream `nix/build-all.py`
@@ -50,6 +50,9 @@
 待恢复的开洞与 representation 编号，`individual` 只做逐个切割，供 Parser 在
 独立、可终止的进程中按宿主限时重试。能力名 `deferred_opening_recovery_v1`。
 默认 `inline` 行为、几何精度、材质和诊断词汇不变。
+
+`.6` 保留完整转换中均匀的逐面颜色和透明度，即使内核没有逐面材质数组，
+也使用原始面样式覆盖对象样式；混合材质和不完整来源仍按既有规则诊断。
 
 Python wrapper、geometry/parse 库和 native plugins 必须从同一源码一起
 构建、打包；不可把不同源码修订的二进制、内部 C++ 类型或库混用。
