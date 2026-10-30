@@ -56,6 +56,13 @@ Only successful complete-mode conversions populate the shape cache. Partial
 conversions may omit operands, so their output must not satisfy a later complete
 conversion of the same item. A complete cached result can serve either mode.
 
+The hybrid kernel can preserve a uniform authored face style as the whole
+representation item's style when the backend has no per-face style array.
+This uses the original style, including opacity, and takes precedence over a
+different object-level style. Mixed face styles, missing provenance and unknown
+representation items still require complete per-face associations. The hybrid
+contract tests and `test_hybrid_failure_contracts.py` cover these boundaries.
+
 ```sh
 cmake --build build --target ifcgeom_cgal_opening_contract_tests
 IFCGEOM_CONTRACT_PLUGIN_DIR=/path/to/build/plugins build/ifcgeom/ifcgeom_cgal_opening_contract_tests
