@@ -68,6 +68,12 @@ bool preserves_face_styles(
                                   source_styles->second.begin(), source_styles->second.end(), [](const auto& style) { return !!style; })) {
             continue;
         }
+        if (styles.empty() && source_styles->second.size() == 1 &&
+            results[i].style_ptr() == *source_styles->second.begin()) {
+            // A uniform source style applies to every surviving face without
+            // requiring a backend-specific per-face association.
+            continue;
+        }
         // Degenerate source faces may be discarded. Every surviving face must
         // still have style provenance from its own representation item.
         if (styles.size() != static_cast<size_t>(shape->num_faces())) {
@@ -165,6 +171,18 @@ namespace ifcopenshell {
                             logger_.message(ifcopenshell::logger::LOG_NOTICE, "Geometry attempt exception; backend=" + k.geometry_library(), item->instance);
                         }
 
+                        if (success && has_face_styles) {
+                            for (auto& result : results) {
+                                const auto source = face_styles.find(result.ItemId());
+                                if (source != face_styles.end() && source->second.size() == 1 &&
+                                    *source->second.begin() && result.shape() &&
+                                    result.shape()->face_styles_complete() && result.shape()->face_styles().empty()) {
+                                    // Preserve the exact authored face style, including opacity.
+                                    // The representation's object style may be different.
+                                    result.setStyle(*source->second.begin());
+                                }
+                            }
+                        }
                         if (success && has_face_styles && !preserves_face_styles(results, 0, face_styles)) {
                             if (material_fallback.empty() && std::all_of(results.begin(), results.end(), [&](const auto& r) {
                                     return r.shape() && face_styles.count(r.ItemId());
